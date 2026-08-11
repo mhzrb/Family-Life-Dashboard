@@ -2,6 +2,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import { getDb } from "../db";
 import { expenseCategories, members, telegramBotState, telegramConversationState, telegramLinks, transactions } from "../db/schema";
 import { enforceRateLimit, writeAudit } from "./security";
+import { budgetTelegramText, calculateBudgetStatus } from "./budget";
 
 export type TelegramUpdate = {
   update_id: number;
@@ -27,7 +28,7 @@ async function token() {
   return (env as unknown as Record<string, string | undefined>).TELEGRAM_BOT_TOKEN;
 }
 
-const mainMenu = { keyboard: [[{ text: "➕ Add expense" }]], resize_keyboard: true, is_persistent: true };
+const mainMenu = { keyboard: [[{ text: "➕ Add expense" }, { text: "📊 Budget status" }]], resize_keyboard: true, is_persistent: true };
 const standardCategoryButtons = [
   { text: "🛒 Groceries", callback_data: "category:Groceries" },
   { text: "☕ Dining", callback_data: "category:Dining" },
@@ -94,6 +95,13 @@ async function activeLink(chatId: string) {
     return null;
   }
   return { link, member };
+}
+
+async function householdBudgetText(householdId: string) {
+  const db = await getDb();
+  const items = await db.select({ type: transactions.type, baseAmountCents: transactions.baseAmountCents, happenedAt: transactions.happenedAt })
+    .from(transactions).where(and(eq(transactions.householdId, householdId), isNull(transactions.deletedAt)));
+  return budgetTelegramText(calculateBudgetStatus(items as Array<{ type: "expense" | "income"; baseAmountCents: number; happenedAt: string }>));
 }
 
 async function saveExpense(updateId: number, chatId: string, category: string, amount: number) {
@@ -217,6 +225,10 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
     await replyToTelegram(chatId, "Choose a category:", await categoryMenu(linked.link.householdId));
     return;
   }
+  if (text === "📊 Budget status" || text.toLowerCase() === "/budget") {
+    await replyToTelegram(chatId, await householdBudgetText(linked.link.householdId), mainMenu);
+    return;
+  }
 
   const [conversation] = await db.select().from(telegramConversationState).where(eq(telegramConversationState.chatId, chatId)).limit(1);
   if (conversation?.state === "awaiting_custom_category") {
@@ -256,7 +268,7 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
     }
     const saved = await saveExpense(update.update_id, chatId, conversation.category, amount);
     await db.delete(telegramConversationState).where(eq(telegramConversationState.chatId, chatId));
-    if (saved) await replyToTelegram(chatId, `Saved ✓  €${amount.toFixed(2)} · ${conversation.category}`, mainMenu);
+    if (saved) await replyToTelegram(chatId, `Saved ✓  €${amount.toFixed(2)} · ${conversation.category}\n\n${await householdBudgetText(linked.link.householdId)}`, mainMenu);
     return;
   }
 
@@ -281,7 +293,7 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
     type: "expense", source: "telegram", telegramUpdateId: String(update.update_id),
     happenedAt: new Date().toISOString(), createdAt: new Date().toISOString(),
   }).onConflictDoNothing().returning({ id: transactions.id });
-  if (inserted.length) await replyToTelegram(chatId, `Saved ✓  €${amount.toFixed(2)} · ${category}\n${note}`, mainMenu);
+  if (inserted.length) await replyToTelegram(chatId, `Saved ✓  €${amount.toFixed(2)} · ${category}\n${note}\n\n${await householdBudgetText(linked.link.householdId)}`, mainMenu);
 }
 
 export async function syncTelegramUpdates() {

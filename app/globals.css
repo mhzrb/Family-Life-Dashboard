@@ -135,6 +135,19 @@ button { color: inherit; }
 @media (max-width: 480px) { .topbar h1 { font-size: 26px; }.topbar > div:first-child > p:last-child { display: none; }.theme-button { display: none; }.metric-grid { grid-template-columns: 1fr; }.metric { min-height: 135px; }.trend-panel { min-height: 245px; }.legend { display: none; }.donut-row { gap: 18px; }.transaction { gap: 7px; }.source-badge { display: none; }.telegram-panel { display: block; }.telegram-panel > div { margin-bottom: 12px; }.rates { gap: 4px; } }
 
 .settings-fab { position: fixed; right: 176px; bottom: 24px; z-index: 10; width: 42px; height: 42px; border: 1px solid var(--line); border-radius: 50%; background: var(--panel); color: var(--green); box-shadow: 0 8px 24px rgba(28, 51, 44, .12); cursor: pointer; font-size: 17px; }
+.budget-card { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; margin-bottom: 18px; padding: 18px 20px; border: 1px solid var(--line); border-left: 5px solid #909891; border-radius: 15px; background: var(--panel); box-shadow: 0 8px 28px rgba(28, 51, 44, .07); }
+.budget-card.under { border-left-color: #24815f; background: color-mix(in srgb, var(--panel) 92%, #dff3e8); }
+.budget-card.over { border-left-color: #c85145; background: color-mix(in srgb, var(--panel) 92%, #f8dfdc); }
+.budget-card span { color: var(--muted); font-size: 8px; font-weight: 800; letter-spacing: .12em; }
+.budget-card h2 { margin: 5px 0 3px; font: 400 26px/1 Georgia, serif; }
+.budget-card h2 small, .budget-month b small { color: var(--muted); font: inherit; font-size: .55em; }
+.budget-card p { margin: 0; color: var(--muted); font-size: 9px; }
+.budget-month { padding-left: 18px; border-left: 1px solid var(--line); }
+.budget-month b { display: block; margin: 7px 0 6px; font: 400 20px/1 Georgia, serif; }
+.budget-month.under b, .budget-card.under h2 { color: #187052; }
+.budget-month.over b, .budget-card.over h2 { color: #b64238; }
+.danger-zone { border-color: color-mix(in srgb, #b94d42 35%, var(--line)); }
+.reset-button { background: var(--panel); }
 .edit-transaction { border: 0; border-radius: 7px; padding: 6px 9px; background: var(--soft); color: var(--green); cursor: pointer; font-size: 8px; font-weight: 700; }
 .split-actions { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; }
 .settings-grid { display: grid; gap: 18px; max-height: 68vh; overflow: auto; padding-right: 4px; }
@@ -156,4 +169,4 @@ button { color: inherit; }
 .audit-list b, .audit-list small { display: block; }
 .audit-list b { font-size: 9px; }
 .audit-list small { margin-top: 3px; color: var(--muted); font-size: 7px; }
-@media (max-width: 720px) { .settings-fab { right: 24px; bottom: 82px; }.split-actions { grid-template-columns: auto 1fr; }.split-actions span { display: none; }.category-create { grid-template-columns: 1fr; } }
+@media (max-width: 720px) { .settings-fab { right: 24px; bottom: 82px; }.split-actions { grid-template-columns: auto 1fr; }.split-actions span { display: none; }.category-create { grid-template-columns: 1fr; }.budget-card { grid-template-columns: 1fr; }.budget-month { padding: 15px 0 0; border-left: 0; border-top: 1px solid var(--line); } }

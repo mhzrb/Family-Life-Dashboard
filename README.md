@@ -15,6 +15,8 @@ the website or through a button-driven Telegram bot.
 - Expense entry in EUR, USD, CAD, and GBP
 - Live exchange rates and weather data from free public APIs
 - Permanent Telegram webhook with button-driven expense entry
+- Combined €20 daily household budget with daily and monthly status
+- Immediate green/red budget feedback on the website and in Telegram
 - One-time Telegram linking codes that expire after 24 hours
 - Custom categories shared between the dashboard and Telegram
 - Edit and soft-delete support for each member's own expenses
@@ -88,6 +90,12 @@ After deployment, the household owner enables permanent delivery from the
 Telegram panel. The bot then receives updates even when the dashboard is
 closed.
 
+If the dashboard is protected with Cloudflare Access, create a separate Access
+application for the exact `/api/telegram` path with a **Bypass** policy. Keep
+every other route behind an **Allow** policy limited to family email addresses.
+The webhook itself remains protected by Telegram's secret-token header, and a
+request without that header is rejected.
+
 ## Deploy
 
 ```bash
@@ -122,7 +130,7 @@ See [SECURITY.md](SECURITY.md) for the security model and reporting process.
 
 ## Roadmap
 
-- Budget limits and Telegram alerts
+- Configurable category budgets and proactive Telegram alerts
 - Weekly and monthly spending insights
 - Receipt OCR and voice input
 - Shared family calendar and recurring bills

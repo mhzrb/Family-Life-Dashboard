@@ -420,6 +420,17 @@ export async function POST(request: Request) {
       return secureJson(await dashboardPayload(db, member));
     }
 
+    if (body.action === "resetTransactions") {
+      if (member.role !== "owner") return secureJson({ error: "Only the household owner can reset expenses" }, { status: 403 });
+      if (body.confirmation !== "RESET") return secureJson({ error: "Reset confirmation is required" }, { status: 400 });
+      const now = new Date().toISOString();
+      await db.update(transactions)
+        .set({ deletedAt: now, updatedAt: now })
+        .where(and(eq(transactions.householdId, member.householdId), isNull(transactions.deletedAt)));
+      await writeAudit({ householdId: member.householdId, actorMemberId: member.id, action: "transactions.reset", entityType: "household", entityId: member.householdId, summary: "Reset all household expenses before daily use" });
+      return secureJson(await dashboardPayload(db, member));
+    }
+
     if (body.action === "addTransaction") {
       const amount = Number(body.amount);
       const category = String(body.category ?? "Other").trim();
