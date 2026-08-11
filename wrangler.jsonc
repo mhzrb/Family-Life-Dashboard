@@ -13,7 +13,7 @@
     {
       "binding": "DB",
       "database_name": "family-life-dashboard",
-      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
+      "database_id": "92b01fbd-e3e5-45e9-a324-ad34bb620d8e",
       "migrations_dir": "drizzle"
     }
   ]
