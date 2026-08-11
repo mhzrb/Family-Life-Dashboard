@@ -1,0 +1,12 @@
+{
+  "name": "Family Expenses",
+  "short_name": "Family",
+  "description": "A private shared household expense dashboard.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f4f3ed",
+  "theme_color": "#1d6b5a",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
