@@ -1,12 +1,10 @@
-import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { getDb } from "../../../db";
 import {
   households,
   auditLogs,
   expenseCategories,
   members,
-  membershipApprovals,
-  membershipRequests,
   telegramLinks,
   transactions,
 } from "../../../db/schema";
@@ -15,7 +13,7 @@ import { enforceRateLimit, safeIsoDate, sameOrigin, secureJson, writeAudit } fro
 
 export const dynamic = "force-dynamic";
 
-const palette = ["#1d6b5a", "#e2764f", "#8b6ccf", "#d5a634", "#4076b9"];
+const palette = ["#2f6fae", "#e47f91", "#8b78b8", "#d2a74f", "#6f9aaa"];
 const allowedCategories = ["Groceries", "Dining", "Transport", "Home", "Health", "Leisure", "Bills", "Other"];
 
 class HttpError extends Error {
@@ -33,7 +31,7 @@ function normalizeName(value: string) {
 }
 
 async function currentMember(request: Request) {
-  const identity = requestIdentity(request);
+  const identity = await requestIdentity(request);
   if (!identity) return null;
   const db = await getDb();
   const existing = await db
@@ -89,20 +87,6 @@ async function dashboardPayload(db: Awaited<ReturnType<typeof getDb>>, member: t
     .where(and(eq(transactions.householdId, member.householdId), isNull(transactions.deletedAt)))
     .orderBy(desc(transactions.happenedAt))
     .limit(300);
-  const pending = await db
-    .select()
-    .from(membershipRequests)
-    .where(and(
-      eq(membershipRequests.householdId, member.householdId),
-      eq(membershipRequests.status, "pending"),
-    ))
-    .orderBy(desc(membershipRequests.createdAt));
-  const approvals = pending.length
-    ? await db
-        .select()
-        .from(membershipApprovals)
-        .where(inArray(membershipApprovals.requestId, pending.map((item) => item.id)))
-    : [];
   const names = new Map(family.map((item) => [item.id, item.name]));
   const customCategories = await db.select().from(expenseCategories)
     .where(and(eq(expenseCategories.householdId, member.householdId), isNull(expenseCategories.archivedAt)))
@@ -116,22 +100,8 @@ async function dashboardPayload(db: Awaited<ReturnType<typeof getDb>>, member: t
     currentMemberId: member.id,
     members: family,
     transactions: activity,
-    membershipRequests: pending.map((item) => {
-      const requestApprovals = approvals.filter((approval) => approval.requestId === item.id);
-      return {
-        id: item.id,
-        action: item.action,
-        targetMemberId: item.targetMemberId,
-        targetName: item.targetName,
-        targetEmail: item.targetEmail,
-        requestedByName: names.get(item.requestedByMemberId) ?? "Member",
-        approvals: requestApprovals.length,
-        requiredApprovals: item.requiredApprovals,
-        currentMemberApproved: requestApprovals.some((approval) => approval.memberId === member.id),
-        canApprove: member.status === "active" && (item.action !== "remove" || item.targetMemberId !== member.id),
-        createdAt: item.createdAt,
-      };
-    }),
+    // Kept as an empty compatibility field so older clients can refresh safely.
+    membershipRequests: [],
     categories: customCategories.map((item) => ({ id: item.id, name: item.name })),
     auditLogs: recentAudit.map((item) => ({ ...item, actorName: item.actorMemberId ? names.get(item.actorMemberId) ?? "Former member" : "System" })),
   };
@@ -172,81 +142,6 @@ async function ensureUniqueMember(
   return nameKey;
 }
 
-async function approvalCount(db: Awaited<ReturnType<typeof getDb>>, requestId: string) {
-  const rows = await db
-    .select({ id: membershipApprovals.id })
-    .from(membershipApprovals)
-    .where(eq(membershipApprovals.requestId, requestId));
-  return rows.length;
-}
-
-async function finalizeRequest(
-  db: Awaited<ReturnType<typeof getDb>>,
-  requestRow: typeof membershipRequests.$inferSelect,
-) {
-  if (requestRow.status !== "pending") return;
-  const approvals = await approvalCount(db, requestRow.id);
-  if (approvals < requestRow.requiredApprovals) return;
-  const now = new Date().toISOString();
-
-  if (requestRow.action === "add") {
-    const nameKey = await ensureUniqueMember(
-      db,
-      requestRow.householdId,
-      requestRow.targetName,
-      requestRow.targetEmail,
-    );
-    const family = await activeFamily(db, requestRow.householdId);
-    await db.insert(members).values({
-      id: requestRow.targetMemberId,
-      householdId: requestRow.householdId,
-      name: requestRow.targetName,
-      nameKey,
-      email: requestRow.targetEmail,
-      color: palette[family.length % palette.length],
-      role: "member",
-      status: "active",
-      telegramLinkCode: code(),
-      telegramLinkCodeExpiresAt: linkExpiry(),
-      createdAt: now,
-    });
-  } else {
-    const [target] = await db
-      .select()
-      .from(members)
-      .where(and(
-        eq(members.id, requestRow.targetMemberId),
-        eq(members.householdId, requestRow.householdId),
-        eq(members.status, "active"),
-      ))
-      .limit(1);
-    if (target) {
-      await db.batch([
-        db.update(members).set({ status: "removed", removedAt: now, nameKey: null }).where(eq(members.id, target.id)),
-        db.delete(telegramLinks).where(eq(telegramLinks.memberId, target.id)),
-      ]);
-      if (target.role === "owner") {
-        const [successor] = await db
-          .select()
-          .from(members)
-          .where(and(
-            eq(members.householdId, requestRow.householdId),
-            eq(members.status, "active"),
-            ne(members.id, target.id),
-          ))
-          .orderBy(members.createdAt)
-          .limit(1);
-        if (successor) await db.update(members).set({ role: "owner" }).where(eq(members.id, successor.id));
-      }
-    }
-  }
-
-  await db
-    .update(membershipRequests)
-    .set({ status: "approved", resolvedAt: now })
-    .where(and(eq(membershipRequests.id, requestRow.id), eq(membershipRequests.status, "pending")));
-}
-
 export async function GET(request: Request) {
   try {
     const member = await currentMember(request);
@@ -269,47 +164,40 @@ export async function POST(request: Request) {
     const body = (await request.json()) as Record<string, unknown>;
     const db = await getDb();
 
-    if (body.action === "requestAddMember") {
+    if (body.action === "addMember") {
+      if (member.role !== "owner") {
+        return secureJson({ error: "Only the household owner can add members" }, { status: 403 });
+      }
       const name = String(body.name ?? "").trim();
       const email = String(body.email ?? "").trim().toLowerCase();
       if (!name || name.length > 80 || email.length > 254 || !email.includes("@")) {
         return Response.json({ error: "A name and valid email are required" }, { status: 400 });
       }
-      await ensureUniqueMember(db, member.householdId, name, email);
-      const [openChange] = await db
-        .select({ id: membershipRequests.id })
-        .from(membershipRequests)
-        .where(and(
-          eq(membershipRequests.householdId, member.householdId),
-          eq(membershipRequests.status, "pending"),
-        ))
-        .limit(1);
-      if (openChange) return Response.json({ error: "Finish the pending member change before starting another" }, { status: 409 });
+      const nameKey = await ensureUniqueMember(db, member.householdId, name, email);
       const family = await activeFamily(db, member.householdId);
       const now = new Date().toISOString();
-      const requestRow = {
-        id: crypto.randomUUID(),
+      const memberId = crypto.randomUUID();
+      await db.insert(members).values({
+        id: memberId,
         householdId: member.householdId,
-        action: "add",
-        targetMemberId: crypto.randomUUID(),
-        targetName: name,
-        targetEmail: email,
-        requestedByMemberId: member.id,
-        requiredApprovals: Math.max(1, family.length - 1),
-        status: "pending",
+        name,
+        nameKey,
+        email,
+        color: palette[family.length % palette.length],
+        role: "member",
+        status: "active",
+        telegramLinkCode: code(),
+        telegramLinkCodeExpiresAt: linkExpiry(),
         createdAt: now,
-        resolvedAt: null,
-      };
-      await db.batch([
-        db.insert(membershipRequests).values(requestRow),
-        db.insert(membershipApprovals).values({ id: crypto.randomUUID(), requestId: requestRow.id, memberId: member.id, createdAt: now }),
-      ]);
-      await writeAudit({ householdId: member.householdId, actorMemberId: member.id, action: "member.add_requested", entityType: "member", entityId: requestRow.targetMemberId, summary: `Requested to add ${name}` });
-      await finalizeRequest(db, requestRow);
-      return Response.json(await dashboardPayload(db, member), { status: 201 });
+      });
+      await writeAudit({ householdId: member.householdId, actorMemberId: member.id, action: "member.added", entityType: "member", entityId: memberId, summary: `Added ${name} to the household` });
+      return secureJson(await dashboardPayload(db, member), { status: 201 });
     }
 
-    if (body.action === "requestRemoveMember") {
+    if (body.action === "removeMember") {
+      if (member.role !== "owner") {
+        return secureJson({ error: "Only the household owner can remove members" }, { status: 403 });
+      }
       const targetMemberId = String(body.targetMemberId ?? "");
       if (!targetMemberId || targetMemberId === member.id) {
         return Response.json({ error: "You cannot remove your own account" }, { status: 400 });
@@ -318,62 +206,13 @@ export async function POST(request: Request) {
       const target = family.find((item) => item.id === targetMemberId);
       if (!target) return Response.json({ error: "Active member not found" }, { status: 404 });
       if (family.length <= 1) return Response.json({ error: "A household must keep at least one member" }, { status: 400 });
-      const [openChange] = await db
-        .select({ id: membershipRequests.id })
-        .from(membershipRequests)
-        .where(and(
-          eq(membershipRequests.householdId, member.householdId),
-          eq(membershipRequests.status, "pending"),
-        ))
-        .limit(1);
-      if (openChange) return Response.json({ error: "Finish the pending member change before starting another" }, { status: 409 });
       const now = new Date().toISOString();
-      const requestRow = {
-        id: crypto.randomUUID(),
-        householdId: member.householdId,
-        action: "remove",
-        targetMemberId: target.id,
-        targetName: target.name,
-        targetEmail: target.email,
-        requestedByMemberId: member.id,
-        requiredApprovals: family.length - 1,
-        status: "pending",
-        createdAt: now,
-        resolvedAt: null,
-      };
       await db.batch([
-        db.insert(membershipRequests).values(requestRow),
-        db.insert(membershipApprovals).values({ id: crypto.randomUUID(), requestId: requestRow.id, memberId: member.id, createdAt: now }),
+        db.update(members).set({ status: "removed", removedAt: now, nameKey: null }).where(eq(members.id, target.id)),
+        db.delete(telegramLinks).where(eq(telegramLinks.memberId, target.id)),
       ]);
-      await writeAudit({ householdId: member.householdId, actorMemberId: member.id, action: "member.remove_requested", entityType: "member", entityId: target.id, summary: `Requested to remove ${target.name}` });
-      await finalizeRequest(db, requestRow);
-      return Response.json(await dashboardPayload(db, member), { status: 201 });
-    }
-
-    if (body.action === "approveMembershipRequest") {
-      const requestId = String(body.requestId ?? "");
-      const [requestRow] = await db
-        .select()
-        .from(membershipRequests)
-        .where(and(
-          eq(membershipRequests.id, requestId),
-          eq(membershipRequests.householdId, member.householdId),
-          eq(membershipRequests.status, "pending"),
-        ))
-        .limit(1);
-      if (!requestRow) return Response.json({ error: "Pending request not found" }, { status: 404 });
-      if (requestRow.action === "remove" && requestRow.targetMemberId === member.id) {
-        return Response.json({ error: "The member being removed cannot approve the request" }, { status: 403 });
-      }
-      await db.insert(membershipApprovals).values({
-        id: crypto.randomUUID(),
-        requestId: requestRow.id,
-        memberId: member.id,
-        createdAt: new Date().toISOString(),
-      }).onConflictDoNothing();
-      await writeAudit({ householdId: member.householdId, actorMemberId: member.id, action: "membership.approved", entityType: "membership_request", entityId: requestRow.id, summary: `Approved ${requestRow.action} request for ${requestRow.targetName}` });
-      await finalizeRequest(db, requestRow);
-      return Response.json(await dashboardPayload(db, member));
+      await writeAudit({ householdId: member.householdId, actorMemberId: member.id, action: "member.removed", entityType: "member", entityId: target.id, summary: `Removed ${target.name} from the household` });
+      return secureJson(await dashboardPayload(db, member));
     }
 
     if (body.action === "rotateTelegramLink") {

@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
   if (!sameOrigin(request)) return secureJson({ error: "Cross-site requests are not allowed" }, { status: 403 });
-  const identity = requestIdentity(request);
+  const identity = await requestIdentity(request);
   if (!identity) return Response.json({ error: "Sign in required" }, { status: 401 });
 
   const db = await getDb();

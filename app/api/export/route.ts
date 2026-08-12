@@ -13,7 +13,7 @@ function csvCell(value: unknown) {
 }
 
 export async function GET(request: Request) {
-  const identity = requestIdentity(request);
+  const identity = await requestIdentity(request);
   if (!identity) return Response.json({ error: "Sign in required" }, { status: 401 });
   const db = await getDb();
   const [member] = await db.select().from(members).where(and(eq(members.email, identity.email), eq(members.status, "active"))).limit(1);

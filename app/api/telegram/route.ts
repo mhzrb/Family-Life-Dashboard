@@ -15,7 +15,8 @@ export async function POST(request: Request) {
 }
 
 export async function GET(request: Request) {
-  if (!requestIdentity(request)) return secureJson({ error: "Sign in required" }, { status: 401 });
+  if (!(await requestIdentity(request))) {return secureJson({ error: "Sign in required" }, { status: 401 });
+}
   const { env } = await import("cloudflare:workers");
   const bindings = env as unknown as Record<string, string | undefined>;
   const configured = Boolean(bindings.TELEGRAM_BOT_TOKEN && bindings.TELEGRAM_WEBHOOK_SECRET);
