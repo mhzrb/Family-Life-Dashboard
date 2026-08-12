@@ -15,7 +15,6 @@ export default defineConfig(async () => {
         config: {
           main: "vinext/server/app-router-entry",
           compatibility_flags: ["nodejs_compat"],
-          d1_databases: [{ binding: "DB", database_name: "family-life-dashboard", database_id: "00000000-0000-4000-8000-000000000000" }],
         },
       }),
     ],
