@@ -99,11 +99,11 @@ export function calculateBudgetStatus(
   const totalAvailableThroughMonthEndCents = activeToday
     ? remainingBudgetAfterTodayCents + dailyDifferenceCents
     : remainingBudgetAfterTodayCents;
-  const recommendedDailyAverageCents = remainingDaysIncludingToday
+  const recommendedDailyAverageCents = remainingDaysAfterToday
     ? Math.max(
         0,
         Math.floor(
-          totalAvailableThroughMonthEndCents / remainingDaysIncludingToday,
+          totalAvailableThroughMonthEndCents / remainingDaysAfterToday,
         ),
       )
     : 0;
@@ -184,7 +184,7 @@ export function budgetTelegramText(
   const future = euro(status.remainingBudgetAfterTodayCents);
   const todayDifference = euro(status.dailyDifferenceCents);
   const showAverage =
-    status.remainingDaysIncludingToday > 0 &&
+    status.remainingDaysAfterToday > 0 &&
     status.totalAvailableThroughMonthEndCents <
       status.plannedBudgetIncludingTodayCents;
 
@@ -198,7 +198,7 @@ export function budgetTelegramText(
     const remaining = `📅 بعد از امروز: ${status.remainingDaysAfterToday} روز باقی مانده · ${future} با برنامهٔ روزانهٔ €20.00.`;
     const totalLine = `💶 کل مبلغ در دسترس تا پایان ماه: ${future} ${operator} ${todayDifference} = ${total}.`;
     const average = showAverage
-      ? `💡 برای ماندن در برنامه، در ${status.remainingDaysIncludingToday} روز باقی‌مانده به‌طور میانگین حداکثر ${euro(status.recommendedDailyAverageCents)} در روز خرج کنید.`
+      ? `💡 از فردا، مبلغ ${total} را میان ${status.remainingDaysAfterToday} روز باقی‌مانده تقسیم کنید: به‌طور میانگین حداکثر ${euro(status.recommendedDailyAverageCents)} در روز.`
       : "";
     return [dateLine, daily, remaining, totalLine, average]
       .filter(Boolean)
@@ -215,7 +215,7 @@ export function budgetTelegramText(
     const remaining = `📅 Na vandaag: nog ${status.remainingDaysAfterToday} dagen · ${future} gepland met €20.00 per dag.`;
     const totalLine = `💶 Totaal beschikbaar tot het einde van de maand: ${future} ${operator} ${todayDifference} = ${total}.`;
     const average = showAverage
-      ? `💡 Om binnen het plan te blijven, besteed je de resterende ${status.remainingDaysIncludingToday} dagen gemiddeld maximaal ${euro(status.recommendedDailyAverageCents)} per dag.`
+      ? `💡 Verdeel vanaf morgen ${total} over de resterende ${status.remainingDaysAfterToday} dagen: gemiddeld maximaal ${euro(status.recommendedDailyAverageCents)} per dag.`
       : "";
     return [dateLine, daily, remaining, totalLine, average]
       .filter(Boolean)
@@ -231,7 +231,7 @@ export function budgetTelegramText(
   const remaining = `📅 After today: ${status.remainingDaysAfterToday} days remain · ${future} planned at €20.00 per day.`;
   const totalLine = `💶 Total available through month end: ${future} ${operator} ${todayDifference} = ${total}.`;
   const average = showAverage
-    ? `💡 To stay within plan, spend an average of no more than ${euro(status.recommendedDailyAverageCents)} per day over the remaining ${status.remainingDaysIncludingToday} days.`
+    ? `💡 From tomorrow, divide ${total} across the remaining ${status.remainingDaysAfterToday} days: an average of no more than ${euro(status.recommendedDailyAverageCents)} per day.`
     : "";
   return [dateLine, daily, remaining, totalLine, average]
     .filter(Boolean)

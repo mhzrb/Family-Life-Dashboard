@@ -1628,8 +1628,8 @@ function BudgetCard({
       : `After today: ${status.remainingDaysAfterToday} days · ${euro(status.remainingBudgetAfterTodayCents)} planned at €20.00 per day`;
   const averageText =
     language === "nl"
-      ? `Veilig gemiddelde: ${euro(status.recommendedDailyAverageCents)} per dag voor ${status.remainingDaysIncludingToday} dagen`
-      : `Safe average: ${euro(status.recommendedDailyAverageCents)} per day for ${status.remainingDaysIncludingToday} days`;
+      ? `Vanaf morgen: ${euro(status.totalAvailableThroughMonthEndCents)} ÷ ${status.remainingDaysAfterToday} dagen = ${euro(status.recommendedDailyAverageCents)} per dag`
+      : `From tomorrow: ${euro(status.totalAvailableThroughMonthEndCents)} ÷ ${status.remainingDaysAfterToday} days = ${euro(status.recommendedDailyAverageCents)} per day`;
   return (
     <section
       className={`budget-card ${status.dailyState}`}
@@ -1667,10 +1667,14 @@ function MonthlyHistoryCard({
   transactions,
   language,
   formatMoney,
+  scopeName,
+  familyView,
 }: {
   transactions: Transaction[];
   language: Language;
   formatMoney: (cents: number, digits?: number) => string;
+  scopeName: string;
+  familyView: boolean;
 }) {
   const currentKey = monthKey(new Date());
   const [selectedMonth, setSelectedMonth] = useState(currentKey);
@@ -1715,7 +1719,15 @@ function MonthlyHistoryCard({
           <span className="eyebrow">
             {language === "nl" ? "12 MAANDEN" : "12 MONTHS"}
           </span>
-          <h2>{language === "nl" ? "Gezinsgeschiedenis" : "Family history"}</h2>
+          <h2>
+            {familyView
+              ? language === "nl"
+                ? "Gezinsgeschiedenis"
+                : "Family history"
+              : language === "nl"
+                ? `Geschiedenis van ${scopeName}`
+                : `${scopeName}'s history`}
+          </h2>
         </div>
         <select
           aria-label={language === "nl" ? "Kies een maand" : "Choose a month"}
@@ -1760,9 +1772,13 @@ function MonthlyHistoryCard({
         })}
       </div>
       <small>
-        {language === "nl"
-          ? "De eigenaar ziet de gecombineerde uitgaven van het hele gezin; verwijderde uitgaven worden niet meegerekend."
-          : "The owner sees combined household spending; deleted expenses are excluded."}
+        {familyView
+          ? language === "nl"
+            ? "Dit is de gecombineerde uitgave van het hele gezin; verwijderde uitgaven worden niet meegerekend."
+            : "This is combined household spending; deleted expenses are excluded."
+          : language === "nl"
+            ? `Dit overzicht bevat alleen de uitgaven van ${scopeName}.`
+            : `This view contains only ${scopeName}'s spending.`}
       </small>
     </section>
   );
@@ -1790,6 +1806,7 @@ export default function Dashboard({
   });
   const [language, setLanguage] = useState<Language>("en");
   const [displayCurrency, setDisplayCurrency] = useState<Currency>("EUR");
+  const [scope, setScope] = useState<string>("family");
   const testModeRef = useRef(false);
   const t = copy[language];
   const rates = external?.rates;
@@ -1879,11 +1896,13 @@ export default function Dashboard({
   const visibleTransactions = useMemo(
     () =>
       isOwner
-        ? data.transactions
+        ? scope === "family"
+          ? data.transactions
+          : data.transactions.filter((item) => item.memberId === scope)
         : data.transactions.filter(
             (item) => item.memberId === data.currentMemberId,
           ),
-    [data.transactions, data.currentMemberId, isOwner],
+    [data.transactions, data.currentMemberId, isOwner, scope],
   );
   const now = new Date();
   const previous = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -1986,37 +2005,61 @@ export default function Dashboard({
             {t.telegram}
           </button>
         </nav>
-        <div className="side-label">
-          {language === "nl" ? "MIJN PROFIEL" : "MY PROFILE"}
-        </div>
+        <div className="side-label">{isOwner ? t.household.toUpperCase() : language === "nl" ? "MIJN PROFIEL" : "MY PROFILE"}</div>
         <div className="scope-list">
-          {currentMember && (
-            <div className="scope active">
-              <span
-                className="avatar"
-                style={{ background: currentMember.color }}
-              >
-                {initials(currentMember.name)}
-              </span>
+          {isOwner && (
+            <button
+              className={`scope ${scope === "family" ? "active" : ""}`}
+              onClick={() => setScope("family")}
+            >
+              <span className="family-avatar">∞</span>
               <div>
-                <b>{currentMember.name}</b>
-                <small>
-                  {currentMember.role === "owner"
-                    ? language === "nl"
-                      ? "Eigenaar · jij"
-                      : "Owner · you"
-                    : t.you}
-                </small>
+                <b>{t.everyone}</b>
+                <small>{t.combined}</small>
               </div>
               <em>
                 {formatMoney(
-                  visibleTransactions
+                  data.transactions
                     .filter((item) => item.type === "expense")
                     .reduce((sum, item) => sum + item.baseAmountCents, 0),
                 )}
               </em>
-            </div>
+            </button>
           )}
+          {(isOwner ? activeMembers : currentMember ? [currentMember] : []).map((member) => (
+            <button
+              key={member.id}
+              className={`scope ${(!isOwner || scope === member.id) ? "active" : ""}`}
+              onClick={() => isOwner && setScope(member.id)}
+            >
+              <span
+                className="avatar"
+                style={{ background: member.color }}
+              >
+                {initials(member.name)}
+              </span>
+              <div>
+                <b>{member.name}</b>
+                <small>
+                  {member.id === data.currentMemberId && member.role === "owner"
+                    ? language === "nl"
+                      ? "Eigenaar · jij"
+                      : "Owner · you"
+                    : member.id === data.currentMemberId
+                      ? t.you
+                      : t.member}
+                </small>
+              </div>
+              <em>
+                {formatMoney(
+                  data.transactions
+                    .filter((item) => item.memberId === member.id)
+                    .filter((item) => item.type === "expense")
+                    .reduce((sum, item) => sum + item.baseAmountCents, 0),
+                )}
+              </em>
+            </button>
+          ))}
         </div>
         {isOwner && (
           <>
@@ -2142,7 +2185,7 @@ export default function Dashboard({
             onUpdated={setData}
           />
         )}
-        {!isDemo && (
+        {!isDemo && (!isOwner || scope === "family") && (
           <BudgetCard transactions={visibleTransactions} language={language} />
         )}
         {!isDemo && isOwner && (
@@ -2150,6 +2193,12 @@ export default function Dashboard({
             transactions={visibleTransactions}
             language={language}
             formatMoney={formatMoney}
+            scopeName={
+              scope === "family"
+                ? t.everyone
+                : activeMembers.find((member) => member.id === scope)?.name ?? ""
+            }
+            familyView={scope === "family"}
           />
         )}
 
@@ -2181,7 +2230,7 @@ export default function Dashboard({
             <strong>
               {formatMoney(currentTotal / Math.max(now.getDate(), 1))}
             </strong>
-            <p>{isOwner ? t.combined : t.thisMember}</p>
+            <p>{isOwner && scope === "family" ? t.combined : t.thisMember}</p>
             <div className="member-strips">
               {currentMember && (
                 <span style={{ background: currentMember.color }} />
@@ -2261,7 +2310,10 @@ export default function Dashboard({
                 {currentMember && (
                   <span>
                     <i style={{ background: currentMember.color }} />
-                    {isOwner ? t.everyone : currentMember.name}
+                    {isOwner && scope === "family"
+                      ? t.everyone
+                      : activeMembers.find((member) => member.id === scope)?.name ??
+                        currentMember.name}
                   </span>
                 )}
               </div>
@@ -2490,7 +2542,7 @@ export default function Dashboard({
       )}
       {modal === "activity" && (
         <ActivityModal
-          items={isOwner ? data.transactions : visibleTransactions}
+          items={visibleTransactions}
           members={data.members}
           currentMemberId={data.currentMemberId}
           isOwner={isOwner}
