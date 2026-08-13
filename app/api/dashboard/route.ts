@@ -114,11 +114,16 @@ async function dashboardPayload(
     .select()
     .from(transactions)
     .where(
-      and(
-        eq(transactions.householdId, member.householdId),
-        eq(transactions.memberId, member.id),
-        isNull(transactions.deletedAt),
-      ),
+      member.role === "owner"
+        ? and(
+            eq(transactions.householdId, member.householdId),
+            isNull(transactions.deletedAt),
+          )
+        : and(
+            eq(transactions.householdId, member.householdId),
+            eq(transactions.memberId, member.id),
+            isNull(transactions.deletedAt),
+          ),
     )
     .orderBy(desc(transactions.happenedAt))
     .limit(300);
@@ -778,14 +783,19 @@ export async function POST(request: Request) {
           and(
             eq(transactions.id, transactionId),
             eq(transactions.householdId, member.householdId),
-            eq(transactions.memberId, member.id),
             isNull(transactions.deletedAt),
           ),
         )
         .limit(1);
-      if (!existing)
+      if (
+        !existing ||
+        (member.role !== "owner" && existing.memberId !== member.id)
+      )
         return secureJson(
-          { error: "You can only delete your own active expenses" },
+          {
+            error:
+              "Only the household owner or the member who created this expense can delete it",
+          },
           { status: 404 },
         );
       await db

@@ -102,6 +102,7 @@ export const telegramLinks = sqliteTable(
     chatId: text("chat_id").primaryKey(),
     memberId: text("member_id").notNull(),
     householdId: text("household_id").notNull(),
+    language: text("language").notNull().default("en"),
     linkedAt: text("linked_at").notNull(),
   },
   (table) => [index("telegram_member_idx").on(table.memberId)],

@@ -10,18 +10,25 @@ import {
   transactions,
 } from "../db/schema";
 import { enforceRateLimit, writeAudit } from "./security";
-import { budgetTelegramText, calculateBudgetStatus } from "./budget";
+import {
+  budgetMonthlySummaryText,
+  budgetTelegramText,
+  calculateBudgetStatus,
+  type TelegramLanguage,
+} from "./budget";
 
 export type TelegramUpdate = {
   update_id: number;
   message?: {
     chat: { id: number };
     text?: string;
+    from?: { language_code?: string };
   };
   callback_query?: {
     id: string;
     data?: string;
     message?: { chat: { id: number } };
+    from?: { language_code?: string };
   };
 };
 
@@ -45,20 +52,241 @@ function token() {
   return typeof value === "string" ? value.trim() : "";
 }
 
-const mainMenu = {
-  keyboard: [[{ text: "➕ Add expense" }, { text: "📊 Budget status" }]],
-  resize_keyboard: true,
-  is_persistent: true,
-};
-const standardCategoryButtons = [
-  { text: "🛒 Groceries", callback_data: "category:Groceries" },
-  { text: "☕ Dining", callback_data: "category:Dining" },
-  { text: "🚆 Transport", callback_data: "category:Transport" },
-  { text: "🏠 Home", callback_data: "category:Home" },
-  { text: "❤️ Health", callback_data: "category:Health" },
-  { text: "✨ Leisure", callback_data: "category:Leisure" },
-  { text: "🧾 Bills", callback_data: "category:Bills" },
-];
+const botCopy = {
+  en: {
+    buttons: {
+      add: "➕ Add expense",
+      budget: "📊 Budget status",
+      month: "📅 Monthly summary",
+      language: "🌐 Language",
+    },
+    categories: {
+      Groceries: "🛒 Groceries",
+      Dining: "☕ Dining",
+      Transport: "🚆 Transport",
+      Home: "🏠 Home",
+      Health: "❤️ Health",
+      Leisure: "✨ Leisure",
+      Bills: "🧾 Bills",
+      Other: "••• Other",
+    },
+    chooseCategory: "Choose a category:",
+    chooseLanguage: "Choose your language:",
+    languageSaved: "Language changed to English ✓",
+    tryAgain: "Please try again",
+    connectFirst: "Connect your account first",
+    wait: "Please wait a moment",
+    addCategory: "Add a new category",
+    typeCategory: "Type the name of the new category, for example: Pets",
+    useOther: "Use Other",
+    amountOnly: "Now send only the amount in EUR, for example: 24.50",
+    categoryNotFound: "Category not found",
+    selected: (name: string) =>
+      `Selected: ${name}\nNow send only the amount in EUR, for example: 24.50`,
+    selectedShort: (name: string) => `${name} selected`,
+    otherQuestion: "Would you like to add a new category?",
+    yesAdd: "Yes, add new",
+    noOther: "No, use Other",
+    tooLong:
+      "That message is too long. Please keep the description under 500 characters.",
+    tooMany: (seconds: number) =>
+      `Too many messages. Please wait ${seconds} seconds.`,
+    linkNotFound:
+      "That link code was not found. Copy the latest code from your dashboard and try again.",
+    linkExpired:
+      "That link has expired. Generate a new Telegram link from the dashboard and try again.",
+    connected: (name: string) =>
+      `Connected as ${name} ✓\nTap “Add expense”, choose a category, then send only the amount.`,
+    firstConnect:
+      "First connect your account with: /link YOURCODE\nGenerate your personal code from your own dashboard.",
+    hello: (name: string) =>
+      `Hi ${name}! Choose an option from the menu below.`,
+    invalidCategory:
+      "Use a short category name (2–30 letters or numbers), for example: Pets",
+    categoryExists:
+      "That category already exists. Choose it from the menu or enter a different name.",
+    categoryAdded: (name: string) =>
+      `Added: ${name} ✓\nNow send only the amount in EUR, for example: 24.50`,
+    invalidAmount: "Please send only a positive number, for example: 24.50",
+    tapAdd:
+      "Tap “Add expense” below, choose a category, then send only the amount.",
+    invalidPositive: "Please enter a valid positive amount.",
+    saved: (amount: number, category: string, note?: string) =>
+      `Saved ✓  €${amount.toFixed(2)} · ${category}${note ? `\n${note}` : ""}`,
+  },
+  nl: {
+    buttons: {
+      add: "➕ Uitgave toevoegen",
+      budget: "📊 Budgetstatus",
+      month: "📅 Maandoverzicht",
+      language: "🌐 Taal",
+    },
+    categories: {
+      Groceries: "🛒 Boodschappen",
+      Dining: "☕ Uit eten",
+      Transport: "🚆 Vervoer",
+      Home: "🏠 Wonen",
+      Health: "❤️ Gezondheid",
+      Leisure: "✨ Vrije tijd",
+      Bills: "🧾 Rekeningen",
+      Other: "••• Overig",
+    },
+    chooseCategory: "Kies een categorie:",
+    chooseLanguage: "Kies je taal:",
+    languageSaved: "Taal gewijzigd naar Nederlands ✓",
+    tryAgain: "Probeer het opnieuw",
+    connectFirst: "Koppel eerst je account",
+    wait: "Wacht even",
+    addCategory: "Nieuwe categorie toevoegen",
+    typeCategory: "Typ de naam van de nieuwe categorie, bijvoorbeeld: Huisdieren",
+    useOther: "Overig gebruiken",
+    amountOnly: "Stuur nu alleen het bedrag in EUR, bijvoorbeeld: 24.50",
+    categoryNotFound: "Categorie niet gevonden",
+    selected: (name: string) =>
+      `Geselecteerd: ${name}\nStuur nu alleen het bedrag in EUR, bijvoorbeeld: 24.50`,
+    selectedShort: (name: string) => `${name} geselecteerd`,
+    otherQuestion: "Wil je een nieuwe categorie toevoegen?",
+    yesAdd: "Ja, toevoegen",
+    noOther: "Nee, Overig gebruiken",
+    tooLong: "Dit bericht is te lang. Houd de beschrijving onder 500 tekens.",
+    tooMany: (seconds: number) =>
+      `Te veel berichten. Wacht ${seconds} seconden.`,
+    linkNotFound:
+      "Deze koppelcode is niet gevonden. Kopieer de nieuwste code uit je dashboard en probeer het opnieuw.",
+    linkExpired:
+      "Deze koppelcode is verlopen. Genereer een nieuwe Telegram-code in je dashboard.",
+    connected: (name: string) =>
+      `Gekoppeld als ${name} ✓\nTik op “Uitgave toevoegen”, kies een categorie en stuur alleen het bedrag.`,
+    firstConnect:
+      "Koppel eerst je account met: /link JOUWCODE\nGenereer je persoonlijke code in je eigen dashboard.",
+    hello: (name: string) =>
+      `Hoi ${name}! Kies hieronder een optie.`,
+    invalidCategory:
+      "Gebruik een korte categorienaam (2–30 letters of cijfers), bijvoorbeeld: Huisdieren",
+    categoryExists:
+      "Deze categorie bestaat al. Kies haar in het menu of voer een andere naam in.",
+    categoryAdded: (name: string) =>
+      `Toegevoegd: ${name} ✓\nStuur nu alleen het bedrag in EUR, bijvoorbeeld: 24.50`,
+    invalidAmount: "Stuur alleen een positief bedrag, bijvoorbeeld: 24.50",
+    tapAdd:
+      "Tik hieronder op “Uitgave toevoegen”, kies een categorie en stuur alleen het bedrag.",
+    invalidPositive: "Voer een geldig positief bedrag in.",
+    saved: (amount: number, category: string, note?: string) =>
+      `Opgeslagen ✓  €${amount.toFixed(2)} · ${category}${note ? `\n${note}` : ""}`,
+  },
+  fa: {
+    buttons: {
+      add: "➕ ثبت هزینه",
+      budget: "📊 وضعیت بودجه",
+      month: "📅 خلاصهٔ ماهانه",
+      language: "🌐 زبان",
+    },
+    categories: {
+      Groceries: "🛒 خرید روزمره",
+      Dining: "☕ رستوران و کافه",
+      Transport: "🚆 حمل‌ونقل",
+      Home: "🏠 خانه",
+      Health: "❤️ سلامت",
+      Leisure: "✨ تفریح",
+      Bills: "🧾 قبوض",
+      Other: "••• سایر",
+    },
+    chooseCategory: "یک دسته‌بندی انتخاب کنید:",
+    chooseLanguage: "زبان خود را انتخاب کنید:",
+    languageSaved: "زبان به فارسی تغییر کرد ✓",
+    tryAgain: "لطفاً دوباره تلاش کنید",
+    connectFirst: "ابتدا حساب خود را متصل کنید",
+    wait: "لطفاً کمی صبر کنید",
+    addCategory: "افزودن دسته‌بندی جدید",
+    typeCategory: "نام دسته‌بندی جدید را بنویسید؛ برای مثال: حیوانات خانگی",
+    useOther: "استفاده از سایر",
+    amountOnly: "حالا فقط مبلغ را به یورو بفرستید؛ برای مثال: 24.50",
+    categoryNotFound: "دسته‌بندی پیدا نشد",
+    selected: (name: string) =>
+      `انتخاب شد: ${name}\nحالا فقط مبلغ را به یورو بفرستید؛ برای مثال: 24.50`,
+    selectedShort: (name: string) => `${name} انتخاب شد`,
+    otherQuestion: "می‌خواهید یک دسته‌بندی جدید اضافه کنید؟",
+    yesAdd: "بله، اضافه کن",
+    noOther: "نه، از سایر استفاده کن",
+    tooLong: "این پیام خیلی طولانی است. توضیحات باید کمتر از ۵۰۰ نویسه باشد.",
+    tooMany: (seconds: number) =>
+      `تعداد پیام‌ها زیاد است. ${seconds} ثانیه صبر کنید.`,
+    linkNotFound:
+      "این کد اتصال پیدا نشد. جدیدترین کد را از داشبورد خود کپی و دوباره امتحان کنید.",
+    linkExpired:
+      "مهلت این کد تمام شده است. از داشبورد خود یک کد جدید Telegram بسازید.",
+    connected: (name: string) =>
+      `حساب ${name} متصل شد ✓\nروی «ثبت هزینه» بزنید، دسته‌بندی را انتخاب کنید و فقط مبلغ را بفرستید.`,
+    firstConnect:
+      "ابتدا حساب را با این دستور متصل کنید: /link YOURCODE\nکد شخصی را از داشبورد خودتان بسازید.",
+    hello: (name: string) =>
+      `سلام ${name}! یکی از گزینه‌های زیر را انتخاب کنید.`,
+    invalidCategory:
+      "یک نام کوتاه ۲ تا ۳۰ حرفی یا عددی وارد کنید؛ برای مثال: حیوانات خانگی",
+    categoryExists:
+      "این دسته‌بندی از قبل وجود دارد. آن را از منو انتخاب کنید یا نام دیگری بنویسید.",
+    categoryAdded: (name: string) =>
+      `اضافه شد: ${name} ✓\nحالا فقط مبلغ را به یورو بفرستید؛ برای مثال: 24.50`,
+    invalidAmount: "فقط یک مبلغ مثبت بفرستید؛ برای مثال: 24.50",
+    tapAdd:
+      "روی «ثبت هزینه» بزنید، دسته‌بندی را انتخاب کنید و فقط مبلغ را بفرستید.",
+    invalidPositive: "یک مبلغ مثبت و معتبر وارد کنید.",
+    saved: (amount: number, category: string, note?: string) =>
+      `ذخیره شد ✓  €${amount.toFixed(2)} · ${category}${note ? `\n${note}` : ""}`,
+  },
+} satisfies Record<TelegramLanguage, object>;
+
+function normalizeLanguage(value: unknown): TelegramLanguage {
+  return value === "nl" || value === "fa" ? value : "en";
+}
+
+function telegramLanguage(value?: string): TelegramLanguage {
+  const code = value?.toLowerCase() ?? "";
+  if (code.startsWith("nl")) return "nl";
+  if (code.startsWith("fa")) return "fa";
+  return "en";
+}
+
+function mainMenu(language: TelegramLanguage) {
+  const buttons = botCopy[language].buttons;
+  return {
+    keyboard: [
+      [{ text: buttons.add }, { text: buttons.budget }],
+      [{ text: buttons.month }, { text: buttons.language }],
+    ],
+    resize_keyboard: true,
+    is_persistent: true,
+  };
+}
+
+function languageMenu() {
+  return {
+    inline_keyboard: [
+      [
+        { text: "English", callback_data: "language:en" },
+        { text: "Nederlands", callback_data: "language:nl" },
+        { text: "فارسی", callback_data: "language:fa" },
+      ],
+    ],
+  };
+}
+
+function matchesButton(
+  text: string,
+  button: "add" | "budget" | "month" | "language",
+) {
+  return (Object.keys(botCopy) as TelegramLanguage[]).some(
+    (language) => botCopy[language].buttons[button] === text,
+  );
+}
+
+function categoryDisplay(language: TelegramLanguage, category: string) {
+  return knownCategories.includes(category)
+    ? botCopy[language].categories[
+        category as keyof (typeof botCopy)["en"]["categories"]
+      ]
+    : category;
+}
 
 function normalizedCategoryName(value: string) {
   return value.trim().replace(/\s+/g, " ");
@@ -68,7 +296,10 @@ function categoryNameKey(value: string) {
   return normalizedCategoryName(value).toLocaleLowerCase("en-US");
 }
 
-async function categoryMenu(householdId: string) {
+async function categoryMenu(
+  householdId: string,
+  language: TelegramLanguage,
+) {
   const db = await getDb();
   const custom = await db
     .select({ id: expenseCategories.id, name: expenseCategories.name })
@@ -80,14 +311,24 @@ async function categoryMenu(householdId: string) {
       ),
     );
   const buttons = [
-    ...standardCategoryButtons,
+    ...knownCategories
+      .filter((category) => category !== "Other")
+      .map((category) => ({
+        text: botCopy[language].categories[
+          category as keyof (typeof botCopy)["en"]["categories"]
+        ],
+        callback_data: `category:${category}`,
+      })),
     ...custom
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((item) => ({
         text: `• ${item.name}`,
         callback_data: `custom_category:${item.id}`,
       })),
-    { text: "••• Other", callback_data: "category:Other" },
+    {
+      text: botCopy[language].categories.Other,
+      callback_data: "category:Other",
+    },
   ];
   const rows: Array<Array<{ text: string; callback_data: string }>> = [];
   for (let index = 0; index < buttons.length; index += 2)
@@ -146,7 +387,7 @@ async function activeLink(chatId: string) {
   return { link, member };
 }
 
-async function memberBudgetText(householdId: string, memberId: string) {
+async function memberBudgetStatus(householdId: string, memberId: string) {
   const db = await getDb();
   const items = await db
     .select({
@@ -162,14 +403,34 @@ async function memberBudgetText(householdId: string, memberId: string) {
         isNull(transactions.deletedAt),
       ),
     );
+  return calculateBudgetStatus(
+    items as Array<{
+      type: "expense" | "income";
+      baseAmountCents: number;
+      happenedAt: string;
+    }>,
+  );
+}
+
+async function memberBudgetText(
+  householdId: string,
+  memberId: string,
+  language: TelegramLanguage,
+) {
   return budgetTelegramText(
-    calculateBudgetStatus(
-      items as Array<{
-        type: "expense" | "income";
-        baseAmountCents: number;
-        happenedAt: string;
-      }>,
-    ),
+    await memberBudgetStatus(householdId, memberId),
+    language,
+  );
+}
+
+async function memberMonthlySummaryText(
+  householdId: string,
+  memberId: string,
+  language: TelegramLanguage,
+) {
+  return budgetMonthlySummaryText(
+    await memberBudgetStatus(householdId, memberId),
+    language,
   );
 }
 
@@ -217,22 +478,46 @@ async function saveExpense(
 export async function processTelegramUpdate(update: TelegramUpdate) {
   const callback = update.callback_query;
   if (callback) {
+    const fallbackLanguage = telegramLanguage(callback.from?.language_code);
     const chatId = callback.message?.chat.id?.toString();
     if (!chatId) {
-      await answerCallback(callback.id, "Please try again");
+      await answerCallback(callback.id, botCopy[fallbackLanguage].tryAgain);
       return;
     }
     const linked = await activeLink(chatId);
     if (!linked) {
-      await answerCallback(callback.id, "Connect your account first");
+      await answerCallback(
+        callback.id,
+        botCopy[fallbackLanguage].connectFirst,
+      );
       return;
     }
+    const language = normalizeLanguage(linked.link.language);
+    const copy = botCopy[language];
     const callbackRate = await enforceRateLimit(`telegram:${chatId}`, 30);
     if (!callbackRate.allowed) {
-      await answerCallback(callback.id, "Please wait a moment");
+      await answerCallback(callback.id, copy.wait);
       return;
     }
     const db = await getDb();
+    if (callback.data?.startsWith("language:")) {
+      const requested = callback.data.slice("language:".length);
+      const newLanguage = normalizeLanguage(requested);
+      await db
+        .update(telegramLinks)
+        .set({ language: newLanguage })
+        .where(eq(telegramLinks.chatId, chatId));
+      await answerCallback(
+        callback.id,
+        botCopy[newLanguage].languageSaved,
+      );
+      await replyToTelegram(
+        chatId,
+        botCopy[newLanguage].languageSaved,
+        mainMenu(newLanguage),
+      );
+      return;
+    }
     if (callback.data === "other:new") {
       await db
         .insert(telegramConversationState)
@@ -250,11 +535,8 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
             updatedAt: new Date().toISOString(),
           },
         });
-      await answerCallback(callback.id, "Add a new category");
-      await replyToTelegram(
-        chatId,
-        "Type the name of the new category, for example: Pets",
-      );
+      await answerCallback(callback.id, copy.addCategory);
+      await replyToTelegram(chatId, copy.typeCategory);
       return;
     }
     if (callback.data === "other:keep") {
@@ -274,11 +556,8 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
             updatedAt: new Date().toISOString(),
           },
         });
-      await answerCallback(callback.id, "Use Other");
-      await replyToTelegram(
-        chatId,
-        "Now send only the amount in EUR, for example: 24.50",
-      );
+      await answerCallback(callback.id, copy.useOther);
+      await replyToTelegram(chatId, copy.amountOnly);
       return;
     }
     if (callback.data?.startsWith("custom_category:")) {
@@ -294,7 +573,7 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
         )
         .limit(1);
       if (!custom) {
-        await answerCallback(callback.id, "Category not found");
+        await answerCallback(callback.id, copy.categoryNotFound);
         return;
       }
       await db
@@ -313,27 +592,27 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
             updatedAt: new Date().toISOString(),
           },
         });
-      await answerCallback(callback.id, `${custom.name} selected`);
-      await replyToTelegram(
-        chatId,
-        `Selected: ${custom.name}\nNow send only the amount in EUR, for example: 24.50`,
-      );
+      await answerCallback(callback.id, copy.selectedShort(custom.name));
+      await replyToTelegram(chatId, copy.selected(custom.name));
       return;
     }
     const category = callback.data?.startsWith("category:")
       ? callback.data.slice("category:".length)
       : "";
     if (!knownCategories.includes(category)) {
-      await answerCallback(callback.id, "Please try again");
+      await answerCallback(callback.id, copy.tryAgain);
       return;
     }
     if (category === "Other") {
-      await answerCallback(callback.id, "Other selected");
-      await replyToTelegram(chatId, "Would you like to add a new category?", {
+      await answerCallback(
+        callback.id,
+        copy.selectedShort(categoryDisplay(language, "Other")),
+      );
+      await replyToTelegram(chatId, copy.otherQuestion, {
         inline_keyboard: [
           [
-            { text: "Yes, add new", callback_data: "other:new" },
-            { text: "No, use Other", callback_data: "other:keep" },
+            { text: copy.yesAdd, callback_data: "other:new" },
+            { text: copy.noOther, callback_data: "other:keep" },
           ],
         ],
       });
@@ -355,22 +634,18 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
           updatedAt: new Date().toISOString(),
         },
       });
-    await answerCallback(callback.id, `${category} selected`);
-    await replyToTelegram(
-      chatId,
-      `Selected: ${category}\nNow send only the amount in EUR, for example: 24.50`,
-    );
+    const displayedCategory = categoryDisplay(language, category);
+    await answerCallback(callback.id, copy.selectedShort(displayedCategory));
+    await replyToTelegram(chatId, copy.selected(displayedCategory));
     return;
   }
   const message = update.message;
   const chatId = message?.chat.id?.toString();
   const text = message?.text?.trim();
   if (!chatId || !text) return;
+  const fallbackLanguage = telegramLanguage(message?.from?.language_code);
   if (text.length > 500) {
-    await replyToTelegram(
-      chatId,
-      "That message is too long. Please keep the description under 500 characters.",
-    );
+    await replyToTelegram(chatId, botCopy[fallbackLanguage].tooLong);
     return;
   }
 
@@ -379,7 +654,7 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
   if (!messageRate.allowed) {
     await replyToTelegram(
       chatId,
-      `Too many messages. Please wait ${messageRate.retryAfter} seconds.`,
+      botCopy[fallbackLanguage].tooMany(messageRate.retryAfter),
     );
     return;
   }
@@ -396,20 +671,14 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
       )
       .limit(1);
     if (!member) {
-      await replyToTelegram(
-        chatId,
-        "That link code was not found. Copy the latest code from your dashboard and try again.",
-      );
+      await replyToTelegram(chatId, botCopy[fallbackLanguage].linkNotFound);
       return;
     }
     if (
       member.telegramLinkCodeExpiresAt &&
       new Date(member.telegramLinkCodeExpiresAt).getTime() < Date.now()
     ) {
-      await replyToTelegram(
-        chatId,
-        "That link has expired. Generate a new Telegram link from the dashboard and try again.",
-      );
+      await replyToTelegram(chatId, botCopy[fallbackLanguage].linkExpired);
       return;
     }
     await db
@@ -418,6 +687,7 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
         chatId,
         memberId: member.id,
         householdId: member.householdId,
+        language: fallbackLanguage,
         linkedAt: new Date().toISOString(),
       })
       .onConflictDoUpdate({
@@ -425,6 +695,7 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
         set: {
           memberId: member.id,
           householdId: member.householdId,
+          language: fallbackLanguage,
           linkedAt: new Date().toISOString(),
         },
       });
@@ -449,42 +720,65 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
     });
     await replyToTelegram(
       chatId,
-      `Connected as ${member.name} ✓\nTap “Add expense”, choose a category, then send only the amount.`,
-      mainMenu,
+      botCopy[fallbackLanguage].connected(member.name),
+      mainMenu(fallbackLanguage),
     );
     return;
   }
 
   const linked = await activeLink(chatId);
   if (!linked) {
-    await replyToTelegram(
-      chatId,
-      "First connect your account with: /link YOURCODE\nGenerate your personal code from your own dashboard.",
-    );
+    await replyToTelegram(chatId, botCopy[fallbackLanguage].firstConnect);
     return;
   }
+  const language = normalizeLanguage(linked.link.language);
+  const copy = botCopy[language];
   if (text === "/start" || text === "/menu" || text === "/help") {
     await replyToTelegram(
       chatId,
-      `Hi ${linked.member.name}! Tap the button below to log an expense.`,
-      mainMenu,
+      copy.hello(linked.member.name),
+      mainMenu(language),
     );
     return;
   }
-  if (text === "➕ Add expense" || text.toLowerCase() === "/expense") {
+  if (matchesButton(text, "add") || text.toLowerCase() === "/expense") {
     await replyToTelegram(
       chatId,
-      "Choose a category:",
-      await categoryMenu(linked.link.householdId),
+      copy.chooseCategory,
+      await categoryMenu(linked.link.householdId, language),
     );
     return;
   }
-  if (text === "📊 Budget status" || text.toLowerCase() === "/budget") {
+  if (matchesButton(text, "budget") || text.toLowerCase() === "/budget") {
     await replyToTelegram(
       chatId,
-      await memberBudgetText(linked.link.householdId, linked.link.memberId),
-      mainMenu,
+      await memberBudgetText(
+        linked.link.householdId,
+        linked.link.memberId,
+        language,
+      ),
+      mainMenu(language),
     );
+    return;
+  }
+  if (
+    matchesButton(text, "month") ||
+    text.toLowerCase() === "/month" ||
+    text.toLowerCase() === "/summary"
+  ) {
+    await replyToTelegram(
+      chatId,
+      await memberMonthlySummaryText(
+        linked.link.householdId,
+        linked.link.memberId,
+        language,
+      ),
+      mainMenu(language),
+    );
+    return;
+  }
+  if (matchesButton(text, "language") || text.toLowerCase() === "/language") {
+    await replyToTelegram(chatId, copy.chooseLanguage, languageMenu());
     return;
   }
 
@@ -502,7 +796,7 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
     ) {
       await replyToTelegram(
         chatId,
-        "Use a short category name (2–30 letters or numbers), for example: Pets",
+        copy.invalidCategory,
       );
       return;
     }
@@ -513,8 +807,8 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
     ) {
       await replyToTelegram(
         chatId,
-        "That category already exists. Choose it from the menu or enter a different name.",
-        await categoryMenu(linked.link.householdId),
+        copy.categoryExists,
+        await categoryMenu(linked.link.householdId, language),
       );
       await db
         .delete(telegramConversationState)
@@ -584,7 +878,7 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
       });
     await replyToTelegram(
       chatId,
-      `Added: ${finalCategory} ✓\nNow send only the amount in EUR, for example: 24.50`,
+      copy.categoryAdded(finalCategory),
     );
     return;
   }
@@ -598,7 +892,7 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
     ) {
       await replyToTelegram(
         chatId,
-        "Please send only a positive number, for example: 24.50",
+        copy.invalidAmount,
       );
       return;
     }
@@ -614,8 +908,8 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
     if (saved)
       await replyToTelegram(
         chatId,
-        `Saved ✓  €${amount.toFixed(2)} · ${conversation.category}\n\n${await memberBudgetText(linked.link.householdId, linked.link.memberId)}`,
-        mainMenu,
+        `${copy.saved(amount, categoryDisplay(language, conversation.category))}\n\n${await memberBudgetText(linked.link.householdId, linked.link.memberId, language)}`,
+        mainMenu(language),
       );
     return;
   }
@@ -627,14 +921,14 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
   if (!match) {
     await replyToTelegram(
       chatId,
-      "Tap “Add expense” below, choose a category, then send only the amount.",
-      mainMenu,
+      copy.tapAdd,
+      mainMenu(language),
     );
     return;
   }
   const amount = Number(match[1].replace(",", "."));
   if (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000_000) {
-    await replyToTelegram(chatId, "Please enter a valid positive amount.");
+    await replyToTelegram(chatId, copy.invalidPositive);
     return;
   }
   const requestedCategory = titleCase(match[2]);
@@ -665,8 +959,8 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
   if (inserted.length)
     await replyToTelegram(
       chatId,
-      `Saved ✓  €${amount.toFixed(2)} · ${category}\n${note}\n\n${await memberBudgetText(linked.link.householdId, linked.link.memberId)}`,
-      mainMenu,
+      `${copy.saved(amount, categoryDisplay(language, category), note)}\n\n${await memberBudgetText(linked.link.householdId, linked.link.memberId, language)}`,
+      mainMenu(language),
     );
 }
 

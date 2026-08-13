@@ -781,12 +781,18 @@ function EditExpenseModal({
   const [note, setNote] = useState(item.note);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const currentMember = data.members.find(
+    (member) => member.id === data.currentMemberId,
+  );
+  const canEdit = item.memberId === data.currentMemberId;
+  const canDelete = canEdit || currentMember?.role === "owner";
   const availableCategories = [
     ...categories,
     ...data.categories.map((entry) => entry.name),
   ];
   async function save(event: FormEvent) {
     event.preventDefault();
+    if (!canEdit) return;
     setBusy(true);
     setError("");
     if (demoMode) {
@@ -865,7 +871,15 @@ function EditExpenseModal({
   return (
     <Modal
       eyebrow={t.householdLedger}
-      title={language === "nl" ? "Uitgave bewerken" : "Edit expense"}
+      title={
+        canEdit
+          ? language === "nl"
+            ? "Uitgave bewerken"
+            : "Edit expense"
+          : language === "nl"
+            ? "Uitgave beheren"
+            : "Manage expense"
+      }
       closeLabel={t.close}
       onClose={onClose}
     >
@@ -878,6 +892,7 @@ function EditExpenseModal({
             <b>{currencySymbols[item.currency as Currency] ?? item.currency}</b>
             <input
               autoFocus
+              disabled={!canEdit}
               inputMode="decimal"
               required
               min="0.01"
@@ -890,6 +905,7 @@ function EditExpenseModal({
         <label>
           <span>{t.category}</span>
           <select
+            disabled={!canEdit}
             value={category}
             onChange={(event) => setCategory(event.target.value)}
           >
@@ -901,6 +917,7 @@ function EditExpenseModal({
         <label>
           <span>{t.whatFor}</span>
           <input
+            disabled={!canEdit}
             maxLength={200}
             value={note}
             onChange={(event) => setNote(event.target.value)}
@@ -908,21 +925,29 @@ function EditExpenseModal({
         </label>
         {error && <p className="form-error">{error}</p>}
         <div className="modal-actions split-actions">
-          <button
-            type="button"
-            className="danger-button"
-            disabled={busy}
-            onClick={remove}
-          >
-            {language === "nl" ? "Verwijderen" : "Delete"}
-          </button>
+          {canDelete && (
+            <button
+              type="button"
+              className="danger-button"
+              disabled={busy}
+              onClick={remove}
+            >
+              {language === "nl" ? "Verwijderen" : "Delete"}
+            </button>
+          )}
           <span />
           <button type="button" className="text-button" onClick={onClose}>
             {t.cancel}
           </button>
-          <button className="primary-button" disabled={busy}>
-            {busy ? t.saving : language === "nl" ? "Opslaan" : "Save changes"}
-          </button>
+          {canEdit && (
+            <button className="primary-button" disabled={busy}>
+              {busy
+                ? t.saving
+                : language === "nl"
+                  ? "Opslaan"
+                  : "Save changes"}
+            </button>
+          )}
         </div>
       </form>
     </Modal>
@@ -1467,6 +1492,7 @@ function ActivityModal({
   items,
   members,
   currentMemberId,
+  isOwner,
   language,
   displayCurrency,
   rates,
@@ -1476,6 +1502,7 @@ function ActivityModal({
   items: Transaction[];
   members: Member[];
   currentMemberId: string;
+  isOwner: boolean;
   language: Language;
   displayCurrency: Currency;
   rates?: Record<string, number>;
@@ -1515,12 +1542,18 @@ function ActivityModal({
                     : ""}
                 </span>
               </div>
-              {item.memberId === currentMemberId && (
+              {(item.memberId === currentMemberId || isOwner) && (
                 <button
                   className="edit-transaction"
                   onClick={() => onEdit(item)}
                 >
-                  {language === "nl" ? "Bewerken" : "Edit"}
+                  {item.memberId === currentMemberId
+                    ? language === "nl"
+                      ? "Bewerken"
+                      : "Edit"
+                    : language === "nl"
+                      ? "Beheren"
+                      : "Manage"}
                 </button>
               )}
               <span
@@ -1566,19 +1599,27 @@ function BudgetCard({
   const dailyText =
     status.dailyState === "neutral"
       ? language === "nl"
-        ? "Vandaag nog geen uitgave — neutrale start"
-        : "No expense yet today — neutral start"
+        ? `${euro(status.dailyBudgetCents)} vandaag beschikbaar`
+        : `${euro(status.dailyBudgetCents)} available today`
       : status.dailyState === "under"
-        ? `${euro(status.dailyDifferenceCents)} ${language === "nl" ? "onder de daglimiet" : "below today’s limit"}`
+        ? `${euro(status.dailyDifferenceCents)} ${language === "nl" ? "vandaag beschikbaar" : "available today"}`
         : `${euro(status.dailyDifferenceCents)} ${language === "nl" ? "boven de daglimiet" : "above today’s limit"}`;
-  const monthText =
-    status.monthState === "neutral"
-      ? language === "nl"
-        ? "Deze maand start neutraal"
-        : "This month starts neutral"
-      : status.monthState === "under"
-        ? `${euro(status.monthDifferenceCents)} ${language === "nl" ? "onder plan deze maand" : "below plan this month"}`
-        : `${euro(status.monthDifferenceCents)} ${language === "nl" ? "boven plan deze maand" : "above plan this month"}`;
+  const operator = status.dailyDifferenceCents >= 0 ? "+" : "−";
+  const totalState =
+    status.totalAvailableThroughMonthEndCents < 0
+      ? "over"
+      : status.totalAvailableThroughMonthEndCents <
+          status.plannedBudgetIncludingTodayCents
+        ? "under"
+        : "neutral";
+  const remainingText =
+    language === "nl"
+      ? `Na vandaag: ${status.remainingDaysAfterToday} dagen · ${euro(status.remainingBudgetAfterTodayCents)} gepland met €20.00 per dag`
+      : `After today: ${status.remainingDaysAfterToday} days · ${euro(status.remainingBudgetAfterTodayCents)} planned at €20.00 per day`;
+  const averageText =
+    language === "nl"
+      ? `Veilig gemiddelde: ${euro(status.recommendedDailyAverageCents)} per dag voor ${status.remainingDaysIncludingToday} dagen`
+      : `Safe average: ${euro(status.recommendedDailyAverageCents)} per day for ${status.remainingDaysIncludingToday} days`;
   return (
     <section
       className={`budget-card ${status.dailyState}`}
@@ -1593,16 +1634,19 @@ function BudgetCard({
         </h2>
         <p>{dailyText}</p>
       </div>
-      <div className={`budget-month ${status.monthState}`}>
-        <span>{language === "nl" ? "MAAND TOT NU TOE" : "MONTH TO DATE"}</span>
+      <div className={`budget-month ${totalState}`}>
+        <span>
+          {language === "nl" ? "TOT HET EINDE VAN DE MAAND" : "THROUGH MONTH END"}
+        </span>
         <b>
-          {euro(status.monthSpentCents)}{" "}
-          <small>/ {euro(status.monthToDateBudgetCents)}</small>
+          {euro(status.totalAvailableThroughMonthEndCents)}{" "}
+          <small>{language === "nl" ? "beschikbaar" : "available"}</small>
         </b>
+        <p>{remainingText}</p>
         <p>
-          {monthText} ·{" "}
-          {language === "nl" ? "volledig maandplan" : "full-month plan"}:{" "}
-          {euro(status.fullMonthBudgetCents)}
+          {euro(status.remainingBudgetAfterTodayCents)} {operator}{" "}
+          {euro(status.dailyDifferenceCents)} ={" "}
+          {euro(status.totalAvailableThroughMonthEndCents)} · {averageText}
         </p>
       </div>
     </section>
@@ -1980,7 +2024,7 @@ export default function Dashboard({
           />
         )}
         {!isDemo && (
-          <BudgetCard transactions={data.transactions} language={language} />
+          <BudgetCard transactions={visibleTransactions} language={language} />
         )}
 
         <section className="metric-grid">
@@ -2320,9 +2364,10 @@ export default function Dashboard({
       )}
       {modal === "activity" && (
         <ActivityModal
-          items={visibleTransactions}
+          items={isOwner ? data.transactions : visibleTransactions}
           members={data.members}
           currentMemberId={data.currentMemberId}
+          isOwner={isOwner}
           language={language}
           displayCurrency={displayCurrency}
           rates={rates}
