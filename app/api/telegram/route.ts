@@ -1,8 +1,4 @@
 import { env } from "cloudflare:workers";
-import {
-  processTelegramUpdate,
-  type TelegramUpdate,
-} from "../../../lib/telegram-server";
 import { requestIdentity } from "../../../lib/server-auth";
 import { secureJson } from "../../../lib/security";
 
@@ -16,26 +12,28 @@ function telegramBindings() {
     typeof bindings.TELEGRAM_WEBHOOK_SECRET === "string"
       ? bindings.TELEGRAM_WEBHOOK_SECRET.trim()
       : "";
-  return { token, secret };
+  const webhookUrl =
+    typeof bindings.TELEGRAM_WEBHOOK_URL === "string"
+      ? bindings.TELEGRAM_WEBHOOK_URL.trim()
+      : "";
+  return { token, secret, webhookUrl };
 }
 
-export async function POST(request: Request) {
-  const { secret } = telegramBindings();
-  if (!secret)
-    return new Response("Webhook is not configured", { status: 503 });
-  if (request.headers.get("x-telegram-bot-api-secret-token") !== secret)
-    return new Response("Unauthorized", { status: 401 });
-  await processTelegramUpdate((await request.json()) as TelegramUpdate);
-  return Response.json({ ok: true });
+export async function POST() {
+  return secureJson(
+    { error: "Telegram updates are handled by the dedicated webhook Worker" },
+    { status: 410 },
+  );
 }
 
 export async function GET(request: Request) {
   if (!(await requestIdentity(request)))
     return secureJson({ error: "Sign in required" }, { status: 401 });
-  const { token, secret } = telegramBindings();
+  const { token, secret, webhookUrl } = telegramBindings();
   const missing = [
     !token ? "TELEGRAM_BOT_TOKEN" : "",
     !secret ? "TELEGRAM_WEBHOOK_SECRET" : "",
+    !webhookUrl ? "TELEGRAM_WEBHOOK_URL" : "",
   ].filter(Boolean);
   const configured = missing.length === 0;
   let webhookReady = false;
@@ -49,11 +47,7 @@ export async function GET(request: Request) {
         ok?: boolean;
         result?: { url?: string };
       };
-      webhookReady = Boolean(
-        result.ok &&
-          result.result?.url ===
-            new URL("/api/telegram", request.url).toString(),
-      );
+      webhookReady = Boolean(result.ok && result.result?.url === webhookUrl);
     } catch {
       /* Keep status false without exposing secret values. */
     }

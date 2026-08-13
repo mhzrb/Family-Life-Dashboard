@@ -6,6 +6,9 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "keep_vars": true,
+  "vars": {
+    "TELEGRAM_WEBHOOK_URL": "https://family-life-telegram.mhmd-zarabieh.workers.dev/telegram",
+  },
   "secrets": {
     "required": [
       "POLICY_AUD",

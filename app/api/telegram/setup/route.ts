@@ -37,9 +37,13 @@ export async function POST(request: Request) {
     typeof bindings.TELEGRAM_WEBHOOK_SECRET === "string"
       ? bindings.TELEGRAM_WEBHOOK_SECRET.trim()
       : "";
-  if (!token || !secret)
+  const webhookUrl =
+    typeof bindings.TELEGRAM_WEBHOOK_URL === "string"
+      ? bindings.TELEGRAM_WEBHOOK_URL.trim()
+      : "";
+  if (!token || !secret || !webhookUrl)
     return secureJson(
-      { error: "Telegram secrets are not configured" },
+      { error: "Telegram webhook configuration is incomplete" },
       { status: 503 },
     );
   if (!/^[A-Za-z0-9_-]{1,256}$/.test(secret))
@@ -51,7 +55,27 @@ export async function POST(request: Request) {
       { status: 400 },
     );
 
-  const webhookUrl = new URL("/api/telegram", request.url).toString();
+  let parsedWebhookUrl: URL;
+  try {
+    parsedWebhookUrl = new URL(webhookUrl);
+  } catch {
+    return secureJson(
+      { error: "Telegram webhook URL is invalid" },
+      { status: 500 },
+    );
+  }
+  if (
+    parsedWebhookUrl.protocol !== "https:" ||
+    parsedWebhookUrl.username ||
+    parsedWebhookUrl.password ||
+    parsedWebhookUrl.hash ||
+    parsedWebhookUrl.pathname !== "/telegram"
+  ) {
+    return secureJson(
+      { error: "Telegram webhook URL is invalid" },
+      { status: 500 },
+    );
+  }
   const response = await fetch(
     `https://api.telegram.org/bot${token}/setWebhook`,
     {

@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "family-life-telegram",
+  "main": "telegram-worker.ts",
+  "compatibility_date": "2026-08-13",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "family-life-dashboard",
+      "database_id": "92b01fbd-e3e5-45e9-a324-ad34bb620d8e",
+      "migrations_dir": "drizzle",
+    },
+  ],
+}
