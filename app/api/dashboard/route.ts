@@ -125,8 +125,7 @@ async function dashboardPayload(
             isNull(transactions.deletedAt),
           ),
     )
-    .orderBy(desc(transactions.happenedAt))
-    .limit(300);
+    .orderBy(desc(transactions.happenedAt));
   const names = new Map(family.map((item) => [item.id, item.name]));
   const customCategories = await db
     .select()

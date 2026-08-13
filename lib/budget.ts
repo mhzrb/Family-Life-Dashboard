@@ -145,10 +145,40 @@ function euro(cents: number) {
   return `€${(Math.abs(cents) / 100).toFixed(2)}`;
 }
 
+function localizedDate(todayKey: string, language: TelegramLanguage) {
+  const locale =
+    language === "fa"
+      ? "fa-IR-u-ca-gregory"
+      : language === "nl"
+        ? "nl-NL"
+        : "en-GB";
+  return new Intl.DateTimeFormat(locale, {
+    timeZone: TIME_ZONE,
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(new Date(`${todayKey}T12:00:00.000Z`));
+}
+
+export function telegramDateText(
+  language: TelegramLanguage = "en",
+  now = new Date(),
+) {
+  const date = localizedDate(dateKey(now), language);
+  if (language === "fa") return `📆 امروز · ${date}`;
+  if (language === "nl") return `📆 Vandaag · ${date}`;
+  return `📆 Today · ${date}`;
+}
+
 export function budgetTelegramText(
   status: BudgetStatus,
   language: TelegramLanguage = "en",
 ) {
+  const dateLine = telegramDateText(
+    language,
+    new Date(`${status.todayKey}T12:00:00.000Z`),
+  );
   const operator = status.dailyDifferenceCents >= 0 ? "+" : "−";
   const total = euro(status.totalAvailableThroughMonthEndCents);
   const future = euro(status.remainingBudgetAfterTodayCents);
@@ -170,7 +200,9 @@ export function budgetTelegramText(
     const average = showAverage
       ? `💡 برای ماندن در برنامه، در ${status.remainingDaysIncludingToday} روز باقی‌مانده به‌طور میانگین حداکثر ${euro(status.recommendedDailyAverageCents)} در روز خرج کنید.`
       : "";
-    return [daily, remaining, totalLine, average].filter(Boolean).join("\n");
+    return [dateLine, daily, remaining, totalLine, average]
+      .filter(Boolean)
+      .join("\n");
   }
 
   if (language === "nl") {
@@ -185,7 +217,9 @@ export function budgetTelegramText(
     const average = showAverage
       ? `💡 Om binnen het plan te blijven, besteed je de resterende ${status.remainingDaysIncludingToday} dagen gemiddeld maximaal ${euro(status.recommendedDailyAverageCents)} per dag.`
       : "";
-    return [daily, remaining, totalLine, average].filter(Boolean).join("\n");
+    return [dateLine, daily, remaining, totalLine, average]
+      .filter(Boolean)
+      .join("\n");
   }
 
   const daily =
@@ -199,39 +233,34 @@ export function budgetTelegramText(
   const average = showAverage
     ? `💡 To stay within plan, spend an average of no more than ${euro(status.recommendedDailyAverageCents)} per day over the remaining ${status.remainingDaysIncludingToday} days.`
     : "";
-  return [daily, remaining, totalLine, average].filter(Boolean).join("\n");
+  return [dateLine, daily, remaining, totalLine, average]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function budgetMonthlySummaryText(
   status: BudgetStatus,
   language: TelegramLanguage = "en",
 ) {
-  const difference = status.fullMonthBudgetCents - status.monthSpentCents;
-
   if (language === "fa") {
     return [
       "📅 خلاصهٔ ماهانه",
-      `هزینهٔ ثبت‌شده: ${euro(status.monthSpentCents)}`,
-      `برنامهٔ این ماه: ${euro(status.fullMonthBudgetCents)}`,
-      difference >= 0
-        ? `وضعیت: ${euro(difference)} کمتر از برنامه`
-        : `وضعیت: ${euro(difference)} بیشتر از برنامه`,
+      `هزینهٔ ثبت‌شده از اول این ماه: ${euro(status.monthSpentCents)}`,
+      budgetTelegramText(status, language),
     ].join("\n");
   }
 
   if (language === "nl") {
     return [
       "📅 Maandoverzicht",
-      `Geregistreerde uitgaven: ${euro(status.monthSpentCents)}`,
-      `Maandplan: ${euro(status.fullMonthBudgetCents)}`,
-      `Status: ${euro(difference)} ${difference >= 0 ? "onder" : "boven"} het plan`,
+      `Geregistreerd sinds het begin van deze maand: ${euro(status.monthSpentCents)}`,
+      budgetTelegramText(status, language),
     ].join("\n");
   }
 
   return [
     "📅 Monthly summary",
-    `Recorded spending: ${euro(status.monthSpentCents)}`,
-    `Monthly plan: ${euro(status.fullMonthBudgetCents)}`,
-    `Status: ${euro(difference)} ${difference >= 0 ? "under" : "over"} plan`,
+    `Recorded since the start of this month: ${euro(status.monthSpentCents)}`,
+    budgetTelegramText(status, language),
   ].join("\n");
 }

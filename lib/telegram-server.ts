@@ -14,6 +14,7 @@ import {
   budgetMonthlySummaryText,
   budgetTelegramText,
   calculateBudgetStatus,
+  telegramDateText,
   type TelegramLanguage,
 } from "./budget";
 
@@ -389,6 +390,11 @@ async function activeLink(chatId: string) {
 
 async function memberBudgetStatus(householdId: string, memberId: string) {
   const db = await getDb();
+  const [member] = await db
+    .select({ role: members.role })
+    .from(members)
+    .where(eq(members.id, memberId))
+    .limit(1);
   const items = await db
     .select({
       type: transactions.type,
@@ -399,7 +405,9 @@ async function memberBudgetStatus(householdId: string, memberId: string) {
     .where(
       and(
         eq(transactions.householdId, householdId),
-        eq(transactions.memberId, memberId),
+        ...(member?.role === "owner"
+          ? []
+          : [eq(transactions.memberId, memberId)]),
         isNull(transactions.deletedAt),
       ),
     );
@@ -736,7 +744,7 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
   if (text === "/start" || text === "/menu" || text === "/help") {
     await replyToTelegram(
       chatId,
-      copy.hello(linked.member.name),
+      `${copy.hello(linked.member.name)}\n${telegramDateText(language)}`,
       mainMenu(language),
     );
     return;

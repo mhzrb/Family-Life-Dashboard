@@ -393,6 +393,16 @@ function categoryColor(category: string) {
 function monthKey(date: Date) {
   return `${date.getFullYear()}-${date.getMonth()}`;
 }
+function monthFromKey(key: string) {
+  const [year, month] = key.split("-").map(Number);
+  return new Date(year, month, 1);
+}
+function monthLabel(key: string, language: Language) {
+  return monthFromKey(key).toLocaleDateString(
+    language === "nl" ? "nl-NL" : "en-GB",
+    { month: "long", year: "numeric" },
+  );
+}
 function convertedCents(
   baseCents: number,
   currency: Currency,
@@ -1653,6 +1663,111 @@ function BudgetCard({
   );
 }
 
+function MonthlyHistoryCard({
+  transactions,
+  language,
+  formatMoney,
+}: {
+  transactions: Transaction[];
+  language: Language;
+  formatMoney: (cents: number, digits?: number) => string;
+}) {
+  const currentKey = monthKey(new Date());
+  const [selectedMonth, setSelectedMonth] = useState(currentKey);
+  const monthlyTotals = useMemo(() => {
+    const totals = new Map<string, number>();
+    transactions
+      .filter((item) => item.type === "expense")
+      .forEach((item) => {
+        const key = monthKey(new Date(item.happenedAt));
+        totals.set(key, (totals.get(key) ?? 0) + item.baseAmountCents);
+      });
+    return totals;
+  }, [transactions]);
+  const months = useMemo(
+    () =>
+      Array.from({ length: 12 }, (_, index) => {
+        const date = new Date();
+        date.setDate(1);
+        date.setMonth(date.getMonth() - index);
+        return monthKey(date);
+      }),
+    [],
+  );
+  const selectedDate = monthFromKey(selectedMonth);
+  const previousDate = new Date(
+    selectedDate.getFullYear(),
+    selectedDate.getMonth() - 1,
+    1,
+  );
+  const selectedTotal = monthlyTotals.get(selectedMonth) ?? 0;
+  const previousTotal = monthlyTotals.get(monthKey(previousDate)) ?? 0;
+  const reduction = previousTotal
+    ? Math.round(((previousTotal - selectedTotal) / previousTotal) * 100)
+    : null;
+  const chartMonths = [...months].reverse();
+  const max = Math.max(...chartMonths.map((key) => monthlyTotals.get(key) ?? 0), 1);
+
+  return (
+    <section className="panel monthly-history">
+      <div className="panel-head">
+        <div>
+          <span className="eyebrow">
+            {language === "nl" ? "12 MAANDEN" : "12 MONTHS"}
+          </span>
+          <h2>{language === "nl" ? "Gezinsgeschiedenis" : "Family history"}</h2>
+        </div>
+        <select
+          aria-label={language === "nl" ? "Kies een maand" : "Choose a month"}
+          value={selectedMonth}
+          onChange={(event) => setSelectedMonth(event.target.value)}
+        >
+          {months.map((key) => (
+            <option key={key} value={key}>
+              {monthLabel(key, language)}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="history-summary">
+        <div>
+          <span>{monthLabel(selectedMonth, language)}</span>
+          <b>{formatMoney(selectedTotal, 2)}</b>
+        </div>
+        <p>
+          {reduction === null
+            ? language === "nl"
+              ? "Nog geen uitgaven in de vorige maand om mee te vergelijken."
+              : "No spending in the previous month to compare yet."
+            : reduction >= 0
+              ? language === "nl"
+                ? `${reduction}% minder uitgegeven dan ${monthLabel(monthKey(previousDate), language)}.`
+                : `${reduction}% less spent than ${monthLabel(monthKey(previousDate), language)}.`
+              : language === "nl"
+                ? `${Math.abs(reduction)}% meer uitgegeven dan ${monthLabel(monthKey(previousDate), language)}.`
+                : `${Math.abs(reduction)}% more spent than ${monthLabel(monthKey(previousDate), language)}.`}
+        </p>
+      </div>
+      <div className="history-bars" role="img" aria-label={language === "nl" ? "Uitgaven per maand" : "Spending by month"}>
+        {chartMonths.map((key) => {
+          const total = monthlyTotals.get(key) ?? 0;
+          return (
+            <div key={key} title={`${monthLabel(key, language)}: ${formatMoney(total, 2)}`}>
+              <i style={{ height: `${Math.max(3, (total / max) * 100)}%` }} />
+              <span>{monthFromKey(key).toLocaleDateString(language === "nl" ? "nl-NL" : "en-GB", { month: "short" })}</span>
+            </div>
+          );
+        })}
+      </div>
+      <small>
+        {language === "nl"
+          ? "De eigenaar ziet de gecombineerde uitgaven van het hele gezin; verwijderde uitgaven worden niet meegerekend."
+          : "The owner sees combined household spending; deleted expenses are excluded."}
+      </small>
+    </section>
+  );
+}
+
 export default function Dashboard({
   initialData,
 }: {
@@ -1754,12 +1869,21 @@ export default function Dashboard({
       ?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  const activeMembers = data.members.filter(
+    (member) => member.status === "active",
+  );
+  const currentMember =
+    activeMembers.find((member) => member.id === data.currentMemberId) ??
+    activeMembers[0];
+  const isOwner = currentMember?.role === "owner";
   const visibleTransactions = useMemo(
     () =>
-      data.transactions.filter(
-        (item) => item.memberId === data.currentMemberId,
-      ),
-    [data.transactions, data.currentMemberId],
+      isOwner
+        ? data.transactions
+        : data.transactions.filter(
+            (item) => item.memberId === data.currentMemberId,
+          ),
+    [data.transactions, data.currentMemberId, isOwner],
   );
   const now = new Date();
   const previous = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -1780,13 +1904,6 @@ export default function Dashboard({
   const change = previousTotal
     ? Math.round(((currentTotal - previousTotal) / previousTotal) * 100)
     : 0;
-  const activeMembers = data.members.filter(
-    (member) => member.status === "active",
-  );
-  const currentMember =
-    activeMembers.find((member) => member.id === data.currentMemberId) ??
-    activeMembers[0];
-  const isOwner = currentMember?.role === "owner";
   const allCategoryNames = Array.from(
     new Set([
       ...categories,
@@ -1938,10 +2055,12 @@ export default function Dashboard({
         <header className="topbar">
           <div>
             <p className="date-line">
+              {language === "nl" ? "VANDAAG" : "TODAY"} ·{" "}
               {now.toLocaleDateString(language === "nl" ? "nl-NL" : "en-GB", {
                 weekday: "long",
                 day: "numeric",
                 month: "long",
+                year: "numeric",
               })}
             </p>
             <h1>{`${t.hello}, ${currentMember?.name ?? ""}.`}</h1>
@@ -2026,6 +2145,13 @@ export default function Dashboard({
         {!isDemo && (
           <BudgetCard transactions={visibleTransactions} language={language} />
         )}
+        {!isDemo && isOwner && (
+          <MonthlyHistoryCard
+            transactions={visibleTransactions}
+            language={language}
+            formatMoney={formatMoney}
+          />
+        )}
 
         <section className="metric-grid">
           <article className="metric hero-metric">
@@ -2055,7 +2181,7 @@ export default function Dashboard({
             <strong>
               {formatMoney(currentTotal / Math.max(now.getDate(), 1))}
             </strong>
-            <p>{t.thisMember}</p>
+            <p>{isOwner ? t.combined : t.thisMember}</p>
             <div className="member-strips">
               {currentMember && (
                 <span style={{ background: currentMember.color }} />
@@ -2135,7 +2261,7 @@ export default function Dashboard({
                 {currentMember && (
                   <span>
                     <i style={{ background: currentMember.color }} />
-                    {currentMember.name}
+                    {isOwner ? t.everyone : currentMember.name}
                   </span>
                 )}
               </div>
