@@ -1,4 +1,5 @@
 import type { DashboardData } from "./types";
+import type { Transaction } from "./types";
 
 const today = new Date();
 const date = (offset: number) => {
@@ -7,48 +8,101 @@ const date = (offset: number) => {
   return value.toISOString();
 };
 
-export const demoData: DashboardData = {
-  household: {
-    id: "demo-household",
-    name: "The Zokaee Home",
-    kind: "family",
-    baseCurrency: "EUR",
-    city: "Hengelo",
-  },
-  currentMemberId: "mahsa",
-  members: [
-    {
-      id: "mahsa",
-      name: "Mahsa",
-      email: "mahsa@example.com",
-      color: "#1d6b5a",
-      role: "owner",
-      status: "active",
-      telegramLinkCode: "MAHSA8",
+const demoNames = [
+  ["Alex", "Jordan"],
+  ["Sam", "Riley"],
+  ["Noah", "Avery"],
+  ["Mila", "Robin"],
+];
+
+export function createDemoData(): DashboardData {
+  const [ownerName, memberName] =
+    demoNames[Math.floor(Math.random() * demoNames.length)];
+  const randomAmount = (minimum: number, maximum: number) =>
+    Math.round((minimum + Math.random() * (maximum - minimum)) * 100);
+  const ownerId = "demo-owner";
+  const memberId = "demo-member";
+  const expense = (
+    id: string,
+    idOfMember: string,
+    minimum: number,
+    maximum: number,
+    category: string,
+    note: string,
+    source: Transaction["source"],
+    offset: number,
+  ): Transaction => {
+    const amountCents = randomAmount(minimum, maximum);
+    return {
+      id,
+      memberId: idOfMember,
+      amountCents,
+      baseAmountCents: amountCents,
+      currency: "EUR",
+      category,
+      note,
+      type: "expense",
+      source,
+      happenedAt: date(offset),
+    };
+  };
+  const demoTransactions: Transaction[] = [
+    expense("t1", ownerId, 12, 32, "Groceries", "Weekly groceries", "web", 0),
+    expense("t2", memberId, 8, 24, "Dining", "Lunch together", "telegram", -1),
+    expense("t3", ownerId, 5, 18, "Transport", "Train tickets", "telegram", -3),
+    expense("t4", memberId, 25, 65, "Home", "Household supplies", "web", -6),
+    expense("t5", ownerId, 10, 30, "Leisure", "Weekend activity", "web", -10),
+  ];
+
+  return {
+    household: {
+      id: "demo-household",
+      name: "Sample Family Home",
+      kind: "family",
+      baseCurrency: "EUR",
+      city: "Hengelo",
+      budgetAdjustmentCents: 0,
+      budgetAdjustmentMonth: null,
     },
-    {
-      id: "mohammad",
-      name: "Mohammad",
-      email: "mohammad@example.com",
-      color: "#e2764f",
-      role: "member",
-      status: "active",
-      telegramLinkCode: "MOHAM4",
-    },
-  ],
-  membershipRequests: [],
-  categories: [],
-  auditLogs: [],
-  transactions: [
-    { id: "t1", memberId: "mahsa", amountCents: 6840, baseAmountCents: 6840, currency: "EUR", category: "Groceries", note: "Albert Heijn", type: "expense", source: "web", happenedAt: date(0) },
-    { id: "t2", memberId: "mohammad", amountCents: 3200, baseAmountCents: 3200, currency: "EUR", category: "Dining", note: "Lunch together", type: "expense", source: "telegram", happenedAt: date(-1) },
-    { id: "t3", memberId: "mahsa", amountCents: 2420, baseAmountCents: 2420, currency: "EUR", category: "Transport", note: "NS train", type: "expense", source: "telegram", happenedAt: date(-2) },
-    { id: "t4", memberId: "mohammad", amountCents: 8990, baseAmountCents: 8990, currency: "EUR", category: "Home", note: "Kitchen shelves", type: "expense", source: "web", happenedAt: date(-4) },
-    { id: "t5", memberId: "mahsa", amountCents: 4700, baseAmountCents: 4700, currency: "EUR", category: "Health", note: "Insurance", type: "expense", source: "web", happenedAt: date(-6) },
-    { id: "t6", memberId: "mohammad", amountCents: 1640, baseAmountCents: 1640, currency: "EUR", category: "Groceries", note: "Weekend market", type: "expense", source: "telegram", happenedAt: date(-8) },
-    { id: "t7", memberId: "mahsa", amountCents: 12000, baseAmountCents: 12000, currency: "EUR", category: "Leisure", note: "The Hague day trip", type: "expense", source: "web", happenedAt: date(-11) },
-    { id: "t8", memberId: "mohammad", amountCents: 5400, baseAmountCents: 5400, currency: "EUR", category: "Groceries", note: "Weekly groceries", type: "expense", source: "web", happenedAt: date(-14) },
-    { id: "t9", memberId: "mahsa", amountCents: 1990, baseAmountCents: 1990, currency: "EUR", category: "Dining", note: "Coffee with friends", type: "expense", source: "telegram", happenedAt: date(-17) },
-    { id: "t10", memberId: "mohammad", amountCents: 6200, baseAmountCents: 6200, currency: "EUR", category: "Home", note: "Household supplies", type: "expense", source: "web", happenedAt: date(-21) },
-  ],
-};
+    budgetAdjustmentCents: 0,
+    currentMemberId: ownerId,
+    members: [
+      {
+        id: ownerId,
+        name: ownerName,
+        email: "owner@example.com",
+        color: "#1d6b5a",
+        role: "owner",
+        canViewHousehold: true,
+        status: "active",
+        telegramLinkCode: "DEMOOWNER",
+        joinedAt: new Date().toISOString(),
+        lastSeenAt: new Date().toISOString(),
+      },
+      {
+        id: memberId,
+        name: memberName,
+        email: "member@example.com",
+        color: "#e2764f",
+        role: "member",
+        canViewHousehold: true,
+        status: "active",
+        telegramLinkCode: "DEMOMEMBER",
+        joinedAt: new Date().toISOString(),
+        lastSeenAt: new Date().toISOString(),
+      },
+    ],
+    membershipRequests: [],
+    categories: [],
+    auditLogs: [],
+    transactions: demoTransactions,
+    familyBudgetTransactions: demoTransactions.map((item) => ({
+      id: item.id,
+      type: item.type,
+      baseAmountCents: item.baseAmountCents,
+      happenedAt: item.happenedAt,
+    })),
+  };
+}
+
+export const demoData = createDemoData();

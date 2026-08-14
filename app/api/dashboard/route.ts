@@ -9,6 +9,7 @@ import {
   transactions,
 } from "../../../db/schema";
 import { requestIdentity } from "../../../lib/server-auth";
+import { budgetMonthKey } from "../../../lib/budget";
 import {
   enforceRateLimit,
   safeIsoDate,
@@ -61,7 +62,25 @@ async function currentMember(request: Request) {
     .from(members)
     .where(eq(members.email, identity.email))
     .limit(1);
-  if (existing[0]) return existing[0].status === "active" ? existing[0] : null;
+  if (existing[0]) {
+    if (existing[0].status !== "active") return null;
+    const now = new Date();
+    const previousSeen = existing[0].lastSeenAt
+      ? new Date(existing[0].lastSeenAt).getTime()
+      : 0;
+    const shouldRefreshPresence =
+      !existing[0].joinedAt ||
+      !Number.isFinite(previousSeen) ||
+      now.getTime() - previousSeen >= 30 * 60 * 1000;
+    if (!shouldRefreshPresence) return existing[0];
+    const seenAt = now.toISOString();
+    const joinedAt = existing[0].joinedAt ?? seenAt;
+    await db
+      .update(members)
+      .set({ joinedAt, lastSeenAt: seenAt })
+      .where(eq(members.id, existing[0].id));
+    return { ...existing[0], joinedAt, lastSeenAt: seenAt };
+  }
 
   const now = new Date().toISOString();
   const householdId = crypto.randomUUID();
@@ -83,9 +102,12 @@ async function currentMember(request: Request) {
       nameKey: normalizeName(identity.name),
       color: palette[0],
       role: "owner",
+      canViewHousehold: true,
       status: "active",
       telegramLinkCode: code(),
       telegramLinkCodeExpiresAt: linkExpiry(),
+      joinedAt: now,
+      lastSeenAt: now,
       createdAt: now,
     }),
   ]);
@@ -110,11 +132,13 @@ async function dashboardPayload(
     .select()
     .from(members)
     .where(eq(members.householdId, member.householdId));
+  const canViewFamily =
+    member.role === "owner" || Boolean(member.canViewHousehold);
   const activity = await db
     .select()
     .from(transactions)
     .where(
-      member.role === "owner"
+      canViewFamily
         ? and(
             eq(transactions.householdId, member.householdId),
             isNull(transactions.deletedAt),
@@ -126,6 +150,20 @@ async function dashboardPayload(
           ),
     )
     .orderBy(desc(transactions.happenedAt));
+  const familyBudgetActivity = await db
+    .select({
+      id: transactions.id,
+      type: transactions.type,
+      baseAmountCents: transactions.baseAmountCents,
+      happenedAt: transactions.happenedAt,
+    })
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.householdId, member.householdId),
+        isNull(transactions.deletedAt),
+      ),
+    );
   const names = new Map(family.map((item) => [item.id, item.name]));
   const customCategories = await db
     .select()
@@ -149,7 +187,10 @@ async function dashboardPayload(
     .orderBy(desc(auditLogs.createdAt))
     .limit(40);
 
-  const privateFamily = family.map((item) =>
+  const visibleFamily = canViewFamily
+    ? family
+    : family.filter((item) => item.id === member.id);
+  const privateFamily = visibleFamily.map((item) =>
     item.id === member.id
       ? item
       : {
@@ -161,10 +202,26 @@ async function dashboardPayload(
   );
 
   return {
-    household,
+    household: {
+      ...household,
+      budgetAdjustmentCents:
+        household?.budgetAdjustmentMonth === budgetMonthKey()
+          ? household.budgetAdjustmentCents
+          : 0,
+    },
+    budgetAdjustmentCents:
+      household?.budgetAdjustmentMonth === budgetMonthKey()
+        ? household.budgetAdjustmentCents
+        : 0,
     currentMemberId: member.id,
     members: privateFamily,
     transactions: activity,
+    familyBudgetTransactions: familyBudgetActivity as Array<{
+      id: string;
+      type: "expense" | "income";
+      baseAmountCents: number;
+      happenedAt: string;
+    }>,
     membershipRequests: [],
     categories: customCategories.map((item) => ({
       id: item.id,
@@ -296,9 +353,12 @@ export async function POST(request: Request) {
         email,
         color: palette[family.length % palette.length],
         role: "member" as const,
+        canViewHousehold: false,
         status: "active" as const,
         telegramLinkCode: code(),
         telegramLinkCodeExpiresAt: linkExpiry(),
+        joinedAt: null,
+        lastSeenAt: null,
         createdAt: now,
       };
       await db.insert(members).values(newMember);
@@ -355,6 +415,75 @@ export async function POST(request: Request) {
         summary: `Removed ${target.name}`,
       });
       return Response.json(await dashboardPayload(db, member));
+    }
+
+    if (body.action === "setHouseholdVisibility") {
+      if (member.role !== "owner")
+        return secureJson(
+          { error: "Only the household owner can change viewing access" },
+          { status: 403 },
+        );
+      const targetMemberId = String(body.targetMemberId ?? "");
+      const allowed = body.allowed === true;
+      const [target] = await db
+        .select()
+        .from(members)
+        .where(
+          and(
+            eq(members.id, targetMemberId),
+            eq(members.householdId, member.householdId),
+            eq(members.status, "active"),
+            ne(members.id, member.id),
+          ),
+        )
+        .limit(1);
+      if (!target)
+        return secureJson({ error: "Active member not found" }, { status: 404 });
+      await db
+        .update(members)
+        .set({ canViewHousehold: allowed })
+        .where(eq(members.id, target.id));
+      await writeAudit({
+        householdId: member.householdId,
+        actorMemberId: member.id,
+        action: allowed ? "member.household_view_granted" : "member.household_view_revoked",
+        entityType: "member",
+        entityId: target.id,
+        summary: `${allowed ? "Granted" : "Revoked"} household overview access for ${target.name}`,
+      });
+      return secureJson(await dashboardPayload(db, member));
+    }
+
+    if (body.action === "updateBudgetAdjustment") {
+      if (member.role !== "owner")
+        return secureJson(
+          { error: "Only the household owner can adjust the family budget" },
+          { status: 403 },
+        );
+      const amount = Number(body.amount);
+      if (!Number.isFinite(amount) || Math.abs(amount) > 1_000_000)
+        return secureJson(
+          { error: "Enter a valid adjustment between -1,000,000 and 1,000,000 EUR" },
+          { status: 400 },
+        );
+      const adjustmentCents = Math.round(amount * 100);
+      const month = budgetMonthKey();
+      await db
+        .update(households)
+        .set({
+          budgetAdjustmentCents: adjustmentCents,
+          budgetAdjustmentMonth: month,
+        })
+        .where(eq(households.id, member.householdId));
+      await writeAudit({
+        householdId: member.householdId,
+        actorMemberId: member.id,
+        action: "budget.adjusted",
+        entityType: "household",
+        entityId: member.householdId,
+        summary: `Set ${month} budget adjustment to EUR ${amount.toFixed(2)}`,
+      });
+      return secureJson(await dashboardPayload(db, member));
     }
 
     if (body.action === "approveMembershipRequest") {

@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { demoData } from "../lib/demo-data";
+import { createDemoData } from "../lib/demo-data";
 import type { DashboardData, Member, Transaction } from "../lib/types";
 import { calculateBudgetStatus } from "../lib/budget";
 
@@ -34,6 +34,8 @@ const currencySymbols: Record<Currency, string> = {
   CAD: "C$",
   GBP: "£",
 };
+const telegramBotUsername = "MZFamilyExpensesTestBot";
+const telegramBotUrl = `https://t.me/${telegramBotUsername}`;
 const categories = [
   "Groceries",
   "Dining",
@@ -99,6 +101,8 @@ const copy: Record<Language, Record<string, string>> = {
     member: "Member",
     invite: "Invite family member",
     telegramBot: "Telegram bot",
+    officialBot: "Official family bot",
+    openOfficialBot: "Open @MZFamilyExpensesTestBot",
     exitTest: "Exit test mode",
     trySample: "Try sample data",
     greeting: "Good afternoon, family.",
@@ -171,6 +175,12 @@ const copy: Record<Language, Record<string, string>> = {
     manageMembers: "Manage members",
     memberChanges: "Member changes",
     activeMembers: "Active members",
+    joined: "Joined",
+    notJoined: "Invited · not signed in yet",
+    lastSeen: "Last seen",
+    allMonths: "All months",
+    today: "Today",
+    yesterday: "Yesterday",
     pendingChanges: "Pending approvals",
     noPending: "No changes are waiting for approval.",
     remove: "Remove",
@@ -229,6 +239,8 @@ const copy: Record<Language, Record<string, string>> = {
     member: "Lid",
     invite: "Gezinslid uitnodigen",
     telegramBot: "Telegram-bot",
+    officialBot: "Officiële gezinsbot",
+    openOfficialBot: "Open @MZFamilyExpensesTestBot",
     exitTest: "Testmodus afsluiten",
     trySample: "Voorbeeldgegevens",
     greeting: "Goedemiddag, familie.",
@@ -301,6 +313,12 @@ const copy: Record<Language, Record<string, string>> = {
     manageMembers: "Leden beheren",
     memberChanges: "Wijzigingen in leden",
     activeMembers: "Actieve leden",
+    joined: "Aangemeld",
+    notJoined: "Uitgenodigd · nog niet ingelogd",
+    lastSeen: "Laatst gezien",
+    allMonths: "Alle maanden",
+    today: "Vandaag",
+    yesterday: "Gisteren",
     pendingChanges: "Wacht op goedkeuring",
     noPending: "Er wachten geen wijzigingen op goedkeuring.",
     remove: "Verwijderen",
@@ -692,6 +710,7 @@ function InviteModal({
             email: email.trim().toLowerCase(),
             color: "#8b6ccf",
             role: "member",
+            canViewHousehold: false,
             status: "active",
             telegramLinkCode: "TEST12",
           },
@@ -1327,6 +1346,46 @@ function MemberManagementModal({
       setBusy("");
     }
   }
+  async function setHouseholdVisibility(id: string, allowed: boolean) {
+    const busyKey = `access:${id}`;
+    setBusy(busyKey);
+    setError("");
+    if (demoMode) {
+      onUpdated({
+        ...data,
+        members: data.members.map((member) =>
+          member.id === id
+            ? { ...member, canViewHousehold: allowed }
+            : member,
+        ),
+      });
+      setBusy("");
+      return;
+    }
+    try {
+      const response = await fetch("/api/dashboard", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "setHouseholdVisibility",
+          targetMemberId: id,
+          allowed,
+        }),
+      });
+      const result = (await response.json()) as DashboardData & {
+        error?: string;
+      };
+      if (!response.ok)
+        throw new Error(result.error || "Could not update viewing access");
+      onUpdated(result);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Could not update viewing access",
+      );
+    } finally {
+      setBusy("");
+    }
+  }
   return (
     <Modal
       eyebrow={t.yourHousehold}
@@ -1344,12 +1403,14 @@ function MemberManagementModal({
         <>
           <p className="modal-copy">
             {language === "nl"
-              ? "De eigenaar kan leden direct toevoegen of verwijderen. Er is geen stemming."
-              : "The owner can add or remove members directly. No voting is used."}
+              ? "De eigenaar kan leden toevoegen of verwijderen en bepalen wie het gezamenlijke overzicht mag zien."
+              : "The owner can add or remove members and decide who may see the combined household overview."}
           </p>
           <div className="member-section">
             <div className="member-section-head">
-              <span>{t.activeMembers}</span>
+              <span>
+                {t.activeMembers} · {active.length}
+              </span>
               <button className="text-button compact" onClick={onInvite}>
                 ＋ {t.addAnother}
               </button>
@@ -1366,22 +1427,61 @@ function MemberManagementModal({
                       ? language === "nl"
                         ? "Eigenaar · jij"
                         : "Owner · you"
-                      : t.member}
+                      : member.joinedAt
+                        ? `${t.member} · ${t.joined}`
+                        : t.notJoined}
                   </small>
+                  {member.lastSeenAt && (
+                    <small className="member-presence">
+                      {t.lastSeen}: {new Date(member.lastSeenAt).toLocaleString(
+                        language === "nl" ? "nl-NL" : "en-GB",
+                        {
+                          day: "numeric",
+                          month: "short",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        },
+                      )}
+                    </small>
+                  )}
                 </div>
                 <div className="member-row-actions">
                   {member.id !== data.currentMemberId && (
-                    <button
-                      className="danger-button"
-                      disabled={busy === member.id}
-                      onClick={() => removeMember(member.id)}
-                    >
-                      {busy === member.id
-                        ? language === "nl"
-                          ? "Verwijderen…"
-                          : "Removing…"
-                        : t.remove}
-                    </button>
+                    <>
+                      <button
+                        className={`access-toggle ${member.canViewHousehold ? "enabled" : ""}`}
+                        disabled={busy === `access:${member.id}`}
+                        onClick={() =>
+                          setHouseholdVisibility(
+                            member.id,
+                            !member.canViewHousehold,
+                          )
+                        }
+                      >
+                        {busy === `access:${member.id}`
+                          ? language === "nl"
+                            ? "Opslaan…"
+                            : "Saving…"
+                          : member.canViewHousehold
+                            ? language === "nl"
+                              ? "Everyone: aan"
+                              : "Everyone: on"
+                            : language === "nl"
+                              ? "Everyone: uit"
+                              : "Everyone: off"}
+                      </button>
+                      <button
+                        className="danger-button"
+                        disabled={busy === member.id}
+                        onClick={() => removeMember(member.id)}
+                      >
+                        {busy === member.id
+                          ? language === "nl"
+                            ? "Verwijderen…"
+                            : "Removing…"
+                          : t.remove}
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
@@ -1468,6 +1568,15 @@ function TelegramPanel({
         <p>
           {ready ? t.connected : configured ? t.botPreview : t.secretsMissing}
         </p>
+        <a
+          className="telegram-bot-link"
+          href={telegramBotUrl}
+          target="_blank"
+          rel="noreferrer"
+          aria-label={t.officialBot}
+        >
+          ↗ {t.openOfficialBot}
+        </a>
         {configured && !ready && current.role === "owner" && (
           <button
             className="activate-bot"
@@ -1520,6 +1629,50 @@ function ActivityModal({
   onEdit: (item: Transaction) => void;
 }) {
   const t = copy[language];
+  const [selectedMonth, setSelectedMonth] = useState("all");
+  const sortedItems = [...items].sort(
+    (a, b) =>
+      new Date(b.happenedAt).getTime() - new Date(a.happenedAt).getTime(),
+  );
+  const monthKeys = Array.from(
+    new Set(
+      sortedItems.map((item) => {
+        const date = new Date(item.happenedAt);
+        return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+      }),
+    ),
+  );
+  const filteredItems = sortedItems.filter((item) => {
+    if (selectedMonth === "all") return true;
+    const date = new Date(item.happenedAt);
+    return (
+      `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}` ===
+      selectedMonth
+    );
+  });
+  const groups = Array.from(
+    filteredItems.reduce((grouped, item) => {
+      const date = new Date(item.happenedAt);
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+      const current = grouped.get(key) ?? [];
+      current.push(item);
+      grouped.set(key, current);
+      return grouped;
+    }, new Map<string, Transaction[]>()),
+  );
+  const localDayKey = (date: Date) =>
+    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  const dayLabel = (key: string) => {
+    if (key === localDayKey(today)) return t.today;
+    if (key === localDayKey(yesterday)) return t.yesterday;
+    return new Date(`${key}T12:00:00`).toLocaleDateString(
+      language === "nl" ? "nl-NL" : "en-GB",
+      { weekday: "long", day: "numeric", month: "long", year: "numeric" },
+    );
+  };
   return (
     <Modal
       eyebrow={t.householdLedger}
@@ -1527,57 +1680,44 @@ function ActivityModal({
       closeLabel={t.close}
       onClose={onClose}
     >
+      <div className="activity-history-toolbar">
+        <p>
+          {language === "nl"
+            ? `${filteredItems.length} uitgaven in deze geschiedenis`
+            : `${filteredItems.length} expenses in this history`}
+        </p>
+        <select
+          value={selectedMonth}
+          onChange={(event) => setSelectedMonth(event.target.value)}
+          aria-label={t.allMonths}
+        >
+          <option value="all">{t.allMonths}</option>
+          {monthKeys.map((key) => (
+            <option value={key} key={key}>
+              {new Date(`${key}-01T12:00:00`).toLocaleDateString(
+                language === "nl" ? "nl-NL" : "en-GB",
+                { month: "long", year: "numeric" },
+              )}
+            </option>
+          ))}
+        </select>
+      </div>
       <div className="all-activity-list">
-        {items.map((item) => {
-          const member = members.find((m) => m.id === item.memberId);
-          const color = categoryColor(item.category);
-          return (
-            <div className="transaction" key={item.id}>
-              <span
-                className="category-icon"
-                style={{ color, background: `${color}18` }}
-              >
-                {categoryIcons[item.category] ?? "•"}
-              </span>
-              <div className="transaction-copy">
-                <b>{item.note}</b>
+        {groups.map(([day, dayItems]) => (
+          <section className="activity-day" key={day}>
+            <div className="activity-day-head">
+              <div>
+                <b>{dayLabel(day)}</b>
                 <span>
-                  {categoryLabel(language, item.category)} · {member?.name} ·{" "}
-                  {new Date(item.happenedAt).toLocaleDateString(
-                    language === "nl" ? "nl-NL" : "en-GB",
-                    { day: "numeric", month: "short", year: "numeric" },
-                  )}
-                  {item.currency !== "EUR"
-                    ? ` · ${currencySymbols[item.currency as Currency] ?? item.currency}${(item.amountCents / 100).toFixed(2)} ${t.entered}`
-                    : ""}
+                  {dayItems.length} {language === "nl" ? "uitgaven" : "expenses"}
                 </span>
               </div>
-              {(item.memberId === currentMemberId || isOwner) && (
-                <button
-                  className="edit-transaction"
-                  onClick={() => onEdit(item)}
-                >
-                  {item.memberId === currentMemberId
-                    ? language === "nl"
-                      ? "Bewerken"
-                      : "Edit"
-                    : language === "nl"
-                      ? "Beheren"
-                      : "Manage"}
-                </button>
-              )}
-              <span
-                className="mini-avatar"
-                title={member?.name}
-                aria-label={member?.name}
-                style={{ background: member?.color }}
-              >
-                {initials(member?.name ?? "?")}
-              </span>
-              <strong className="transaction-amount">
+              <strong>
                 −
                 {money(
-                  item.baseAmountCents,
+                  dayItems
+                    .filter((item) => item.type === "expense")
+                    .reduce((sum, item) => sum + item.baseAmountCents, 0),
                   displayCurrency,
                   rates,
                   language,
@@ -1585,8 +1725,69 @@ function ActivityModal({
                 )}
               </strong>
             </div>
-          );
-        })}
+            {dayItems.map((item) => {
+              const member = members.find((m) => m.id === item.memberId);
+              const color = categoryColor(item.category);
+              return (
+                <div className="transaction" key={item.id}>
+                  <span
+                    className="category-icon"
+                    style={{ color, background: `${color}18` }}
+                  >
+                    {categoryIcons[item.category] ?? "•"}
+                  </span>
+                  <div className="transaction-copy">
+                    <b>{item.note}</b>
+                    <span>
+                      {categoryLabel(language, item.category)} · {member?.name} ·{" "}
+                      {new Date(item.happenedAt).toLocaleTimeString(
+                        language === "nl" ? "nl-NL" : "en-GB",
+                        { hour: "2-digit", minute: "2-digit" },
+                      )}
+                      {` · ${item.source === "telegram" ? "Telegram" : "Web"}`}
+                      {item.currency !== "EUR"
+                        ? ` · ${currencySymbols[item.currency as Currency] ?? item.currency}${(item.amountCents / 100).toFixed(2)} ${t.entered}`
+                        : ""}
+                    </span>
+                  </div>
+                  {(item.memberId === currentMemberId || isOwner) && (
+                    <button
+                      className="edit-transaction"
+                      onClick={() => onEdit(item)}
+                    >
+                      {item.memberId === currentMemberId
+                        ? language === "nl"
+                          ? "Bewerken"
+                          : "Edit"
+                        : language === "nl"
+                          ? "Beheren"
+                          : "Manage"}
+                    </button>
+                  )}
+                  <span
+                    className="mini-avatar"
+                    title={member?.name}
+                    aria-label={member?.name}
+                    style={{ background: member?.color }}
+                  >
+                    {initials(member?.name ?? "?")}
+                  </span>
+                  <strong className="transaction-amount">
+                    −
+                    {money(
+                      item.baseAmountCents,
+                      displayCurrency,
+                      rates,
+                      language,
+                      2,
+                    )}
+                  </strong>
+                </div>
+              );
+            })}
+          </section>
+        ))}
+        {!groups.length && <p className="modal-copy">{t.emptyText}</p>}
       </div>
     </Modal>
   );
@@ -1594,27 +1795,42 @@ function ActivityModal({
 
 function BudgetCard({
   transactions,
+  adjustmentCents,
   language,
+  displayCurrency,
+  rates,
+  isOwner,
+  onAdjust,
 }: {
-  transactions: Transaction[];
+  transactions: Array<
+    Pick<Transaction, "type" | "baseAmountCents" | "happenedAt">
+  >;
+  adjustmentCents: number;
   language: Language;
+  displayCurrency: Currency;
+  rates?: Record<string, number>;
+  isOwner: boolean;
+  onAdjust: () => void;
 }) {
-  const status = calculateBudgetStatus(transactions);
-  const euro = (cents: number) =>
-    new Intl.NumberFormat(language === "nl" ? "nl-NL" : "en-NL", {
-      style: "currency",
-      currency: "EUR",
-      minimumFractionDigits: 2,
-    }).format(Math.abs(cents) / 100);
+  const status = calculateBudgetStatus(
+    transactions,
+    new Date(),
+    adjustmentCents,
+  );
+  const budgetMoney = (cents: number) =>
+    money(Math.abs(cents), displayCurrency, rates, language, 2);
+  const totalMoney = (cents: number) =>
+    money(cents, displayCurrency, rates, language, 2);
+  const signed = (cents: number) =>
+    `${cents >= 0 ? "+" : "−"} ${budgetMoney(cents)}`;
   const dailyText =
     status.dailyState === "neutral"
       ? language === "nl"
-        ? `${euro(status.dailyBudgetCents)} vandaag beschikbaar`
-        : `${euro(status.dailyBudgetCents)} available today`
+        ? `${budgetMoney(status.dailyBudgetCents)} vandaag beschikbaar`
+        : `${budgetMoney(status.dailyBudgetCents)} available today`
       : status.dailyState === "under"
-        ? `${euro(status.dailyDifferenceCents)} ${language === "nl" ? "vandaag beschikbaar" : "available today"}`
-        : `${euro(status.dailyDifferenceCents)} ${language === "nl" ? "boven de daglimiet" : "above today’s limit"}`;
-  const operator = status.dailyDifferenceCents >= 0 ? "+" : "−";
+        ? `${budgetMoney(status.dailyDifferenceCents)} ${language === "nl" ? "vandaag beschikbaar" : "available today"}`
+        : `${budgetMoney(status.dailyDifferenceCents)} ${language === "nl" ? "boven de daglimiet" : "above today’s limit"}`;
   const totalState =
     status.totalAvailableThroughMonthEndCents < 0
       ? "over"
@@ -1624,23 +1840,28 @@ function BudgetCard({
         : "neutral";
   const remainingText =
     language === "nl"
-      ? `Na vandaag: ${status.remainingDaysAfterToday} dagen · ${euro(status.remainingBudgetAfterTodayCents)} gepland met €20.00 per dag`
-      : `After today: ${status.remainingDaysAfterToday} days · ${euro(status.remainingBudgetAfterTodayCents)} planned at €20.00 per day`;
+      ? `Na vandaag: ${status.remainingDaysAfterToday} dagen · ${budgetMoney(status.remainingBudgetAfterTodayCents)} gepland met ${budgetMoney(status.dailyBudgetCents)} per dag`
+      : `After today: ${status.remainingDaysAfterToday} days · ${budgetMoney(status.remainingBudgetAfterTodayCents)} planned at ${budgetMoney(status.dailyBudgetCents)} per day`;
   const averageText =
-    language === "nl"
-      ? `Vanaf morgen: ${euro(status.totalAvailableThroughMonthEndCents)} ÷ ${status.remainingDaysAfterToday} dagen = ${euro(status.recommendedDailyAverageCents)} per dag`
-      : `From tomorrow: ${euro(status.totalAvailableThroughMonthEndCents)} ÷ ${status.remainingDaysAfterToday} days = ${euro(status.recommendedDailyAverageCents)} per day`;
+    status.remainingDaysAfterToday === 0
+      ? language === "nl"
+        ? "De maand eindigt vandaag"
+        : "The month ends today"
+      : language === "nl"
+        ? `Vanaf morgen: ${totalMoney(status.totalAvailableThroughMonthEndCents)} ÷ ${status.remainingDaysAfterToday} dagen = ${budgetMoney(status.recommendedDailyAverageCents)} per dag`
+        : `From tomorrow: ${totalMoney(status.totalAvailableThroughMonthEndCents)} ÷ ${status.remainingDaysAfterToday} days = ${budgetMoney(status.recommendedDailyAverageCents)} per day`;
   return (
     <section
       className={`budget-card ${status.dailyState}`}
-      aria-label={language === "nl" ? "Mijn budget" : "My budget"}
+      aria-label={language === "nl" ? "Gezinsbudget" : "Family budget"}
     >
       <div>
         <span>
-          {language === "nl" ? "MIJN DAGELIJKS BUDGET" : "MY DAILY BUDGET"}
+          {language === "nl" ? "DAGELIJKS GEZINSBUDGET" : "FAMILY DAILY BUDGET"}
         </span>
         <h2>
-          {euro(status.todaySpentCents)} <small>/ €20.00</small>
+          {budgetMoney(status.todaySpentCents)}{" "}
+          <small>/ {budgetMoney(status.dailyBudgetCents)}</small>
         </h2>
         <p>{dailyText}</p>
       </div>
@@ -1649,17 +1870,133 @@ function BudgetCard({
           {language === "nl" ? "TOT HET EINDE VAN DE MAAND" : "THROUGH MONTH END"}
         </span>
         <b>
-          {euro(status.totalAvailableThroughMonthEndCents)}{" "}
+          {totalMoney(status.totalAvailableThroughMonthEndCents)}{" "}
           <small>{language === "nl" ? "beschikbaar" : "available"}</small>
         </b>
         <p>{remainingText}</p>
         <p>
-          {euro(status.remainingBudgetAfterTodayCents)} {operator}{" "}
-          {euro(status.dailyDifferenceCents)} ={" "}
-          {euro(status.totalAvailableThroughMonthEndCents)} · {averageText}
+          {budgetMoney(status.remainingBudgetAfterTodayCents)}{" "}
+          {signed(status.dailyDifferenceCents)}{" "}
+          {status.adjustmentCents
+            ? `${signed(status.adjustmentCents)} `
+            : ""}
+          = {totalMoney(status.totalAvailableThroughMonthEndCents)} ·{" "}
+          {averageText}
         </p>
+        {isOwner && (
+          <button className="budget-adjust-button" onClick={onAdjust}>
+            {language === "nl"
+              ? "Budget aanpassen"
+              : "Adjust remaining budget"}
+          </button>
+        )}
       </div>
     </section>
+  );
+}
+
+function BudgetAdjustmentModal({
+  language,
+  data,
+  demoMode,
+  onClose,
+  onUpdated,
+}: {
+  language: Language;
+  data: DashboardData;
+  demoMode: boolean;
+  onClose: () => void;
+  onUpdated: (data: DashboardData) => void;
+}) {
+  const [amount, setAmount] = useState(
+    (data.budgetAdjustmentCents / 100).toFixed(2),
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    const value = Number(amount);
+    if (!Number.isFinite(value)) {
+      setError(language === "nl" ? "Voer een geldig bedrag in." : "Enter a valid amount.");
+      return;
+    }
+    if (demoMode) {
+      const cents = Math.round(value * 100);
+      onUpdated({
+        ...data,
+        budgetAdjustmentCents: cents,
+        household: { ...data.household, budgetAdjustmentCents: cents },
+      });
+      onClose();
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const response = await fetch("/api/dashboard", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "updateBudgetAdjustment", amount: value }),
+      });
+      const result = (await response.json()) as DashboardData & { error?: string };
+      if (!response.ok) throw new Error(result.error || "Could not update budget");
+      onUpdated(result);
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update budget");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal
+      eyebrow={language === "nl" ? "GEZINSBUDGET" : "FAMILY BUDGET"}
+      title={language === "nl" ? "Resterend budget aanpassen" : "Adjust remaining budget"}
+      closeLabel={language === "nl" ? "Sluiten" : "Close"}
+      onClose={onClose}
+    >
+      <p className="modal-copy">
+        {language === "nl"
+          ? "Gebruik een positief bedrag om geld toe te voegen of een negatief bedrag om het budget van deze maand te verlagen. De daglimiet blijft ongewijzigd."
+          : "Use a positive amount to add money or a negative amount to reduce this month’s remaining budget. The daily limit stays unchanged."}
+      </p>
+      <form className="expense-form" onSubmit={save}>
+        <label>
+          <span>{language === "nl" ? "Aanpassing in EUR" : "Adjustment in EUR"}</span>
+          <input
+            required
+            inputMode="decimal"
+            value={amount}
+            onChange={(event) => setAmount(event.target.value)}
+            placeholder="10.00 or -30.00"
+          />
+        </label>
+        <div className="budget-examples">
+          <button type="button" onClick={() => setAmount("10.00")}>+ €10</button>
+          <button type="button" onClick={() => setAmount("-30.00")}>− €30</button>
+          <button type="button" onClick={() => setAmount("0.00")}>
+            {language === "nl" ? "Wissen" : "Clear"}
+          </button>
+        </div>
+        {error && <p className="form-error">{error}</p>}
+        <div className="modal-actions">
+          <button type="button" className="text-button" onClick={onClose}>
+            {language === "nl" ? "Annuleren" : "Cancel"}
+          </button>
+          <button className="primary-button" disabled={saving}>
+            {saving
+              ? language === "nl"
+                ? "Opslaan…"
+                : "Saving…"
+              : language === "nl"
+                ? "Opslaan"
+                : "Save adjustment"}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -1792,7 +2129,14 @@ export default function Dashboard({
   const [data, setData] = useState(initialData);
   const [external, setExternal] = useState<ExternalData | null>(null);
   const [modal, setModal] = useState<
-    "expense" | "edit" | "invite" | "members" | "activity" | "settings" | null
+    | "expense"
+    | "edit"
+    | "invite"
+    | "members"
+    | "activity"
+    | "settings"
+    | "budget"
+    | null
   >(null);
   const [selectedTransaction, setSelectedTransaction] =
     useState<Transaction | null>(null);
@@ -1807,6 +2151,8 @@ export default function Dashboard({
   const [language, setLanguage] = useState<Language>("en");
   const [displayCurrency, setDisplayCurrency] = useState<Currency>("EUR");
   const [scope, setScope] = useState<string>("family");
+  const [publicDemo, setPublicDemo] = useState(false);
+  const [secureAppUrl, setSecureAppUrl] = useState("");
   const testModeRef = useRef(false);
   const t = copy[language];
   const rates = external?.rates;
@@ -1832,8 +2178,24 @@ export default function Dashboard({
     }
   }, []);
   useEffect(() => {
+    fetch("/api/public-config", { cache: "no-store" })
+      .then((response) =>
+        response.json<{ publicDemo?: boolean; secureAppUrl?: string }>(),
+      )
+      .then((config) => {
+        if (!config.publicDemo) return;
+        testModeRef.current = true;
+        setPublicDemo(true);
+        setSecureAppUrl(config.secureAppUrl ?? "");
+        setData(createDemoData());
+        setIsDemo(true);
+        setScope("family");
+      })
+      .catch(() => null);
+  }, []);
+  useEffect(() => {
     const first = window.setTimeout(refresh, 0);
-    const timer = window.setInterval(refresh, 15000);
+    const timer = window.setInterval(refresh, 60000);
     return () => {
       window.clearTimeout(first);
       window.clearInterval(timer);
@@ -1866,16 +2228,16 @@ export default function Dashboard({
 
   function enterTestMode() {
     testModeRef.current = true;
-    setData({
-      ...demoData,
-      transactions: demoData.transactions.filter(
-        (item) => item.memberId === demoData.currentMemberId,
-      ),
-    });
+    setData(createDemoData());
+    setScope("family");
     setIsDemo(true);
     setShowTelegram(false);
   }
   function exitTestMode() {
+    if (publicDemo) {
+      if (secureAppUrl) window.location.assign(secureAppUrl);
+      return;
+    }
     testModeRef.current = false;
     setIsDemo(false);
     refresh();
@@ -1893,16 +2255,28 @@ export default function Dashboard({
     activeMembers.find((member) => member.id === data.currentMemberId) ??
     activeMembers[0];
   const isOwner = currentMember?.role === "owner";
+  const canViewHousehold =
+    isOwner || Boolean(currentMember?.canViewHousehold);
   const visibleTransactions = useMemo(
     () =>
-      isOwner
+      canViewHousehold
         ? scope === "family"
           ? data.transactions
-          : data.transactions.filter((item) => item.memberId === scope)
+          : data.transactions.filter(
+              (item) =>
+                item.memberId ===
+                (isOwner ? scope : data.currentMemberId),
+            )
         : data.transactions.filter(
             (item) => item.memberId === data.currentMemberId,
           ),
-    [data.transactions, data.currentMemberId, isOwner, scope],
+    [
+      data.transactions,
+      data.currentMemberId,
+      canViewHousehold,
+      isOwner,
+      scope,
+    ],
   );
   const now = new Date();
   const previous = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -2005,9 +2379,15 @@ export default function Dashboard({
             {t.telegram}
           </button>
         </nav>
-        <div className="side-label">{isOwner ? t.household.toUpperCase() : language === "nl" ? "MIJN PROFIEL" : "MY PROFILE"}</div>
+        <div className="side-label">
+          {canViewHousehold
+            ? t.household.toUpperCase()
+            : language === "nl"
+              ? "MIJN PROFIEL"
+              : "MY PROFILE"}
+        </div>
         <div className="scope-list">
-          {isOwner && (
+          {canViewHousehold && (
             <button
               className={`scope ${scope === "family" ? "active" : ""}`}
               onClick={() => setScope("family")}
@@ -2029,8 +2409,8 @@ export default function Dashboard({
           {(isOwner ? activeMembers : currentMember ? [currentMember] : []).map((member) => (
             <button
               key={member.id}
-              className={`scope ${(!isOwner || scope === member.id) ? "active" : ""}`}
-              onClick={() => isOwner && setScope(member.id)}
+              className={`scope ${(!canViewHousehold || scope === member.id) ? "active" : ""}`}
+              onClick={() => canViewHousehold && setScope(member.id)}
             >
               <span
                 className="avatar"
@@ -2089,7 +2469,13 @@ export default function Dashboard({
           </button>
           <button onClick={isDemo ? exitTestMode : enterTestMode}>
             <span>◌</span>
-            {isDemo ? t.exitTest : t.trySample}
+            {isDemo
+              ? publicDemo
+                ? language === "nl"
+                  ? "Veilig inloggen"
+                  : "Secure sign in"
+                : t.exitTest
+              : t.trySample}
           </button>
         </div>
       </aside>
@@ -2169,7 +2555,16 @@ export default function Dashboard({
           <div className="demo-banner">
             <span>{t.testMode}</span>
             {t.testMessage}
-            <button onClick={exitTestMode}>{t.exitTest}</button>
+            <button
+              onClick={exitTestMode}
+              disabled={publicDemo && !secureAppUrl}
+            >
+              {publicDemo
+                ? language === "nl"
+                  ? "Inloggen op mijn dashboard"
+                  : "Sign in to my dashboard"
+                : t.exitTest}
+            </button>
           </div>
         )}
         {showTelegram && currentMember && (
@@ -2185,8 +2580,16 @@ export default function Dashboard({
             onUpdated={setData}
           />
         )}
-        {!isDemo && (!isOwner || scope === "family") && (
-          <BudgetCard transactions={visibleTransactions} language={language} />
+        {!isDemo && (
+          <BudgetCard
+            transactions={data.familyBudgetTransactions}
+            adjustmentCents={data.budgetAdjustmentCents}
+            language={language}
+            displayCurrency={displayCurrency}
+            rates={rates}
+            isOwner={isOwner}
+            onAdjust={() => setModal("budget")}
+          />
         )}
         {!isDemo && isOwner && (
           <MonthlyHistoryCard
@@ -2517,6 +2920,15 @@ export default function Dashboard({
             setData((old) => ({
               ...old,
               transactions: [item, ...old.transactions],
+              familyBudgetTransactions: [
+                {
+                  id: item.id,
+                  type: item.type,
+                  baseAmountCents: item.baseAmountCents,
+                  happenedAt: item.happenedAt,
+                },
+                ...old.familyBudgetTransactions,
+              ],
             }))
           }
         />
@@ -2572,12 +2984,26 @@ export default function Dashboard({
               transactions: old.transactions.map((entry) =>
                 entry.id === item.id ? item : entry,
               ),
+              familyBudgetTransactions: old.familyBudgetTransactions.map(
+                (entry) =>
+                  entry.id === item.id
+                    ? {
+                        id: item.id,
+                        type: item.type,
+                        baseAmountCents: item.baseAmountCents,
+                        happenedAt: item.happenedAt,
+                      }
+                    : entry,
+              ),
             }))
           }
           onDeleted={(id) =>
             setData((old) => ({
               ...old,
               transactions: old.transactions.filter((entry) => entry.id !== id),
+              familyBudgetTransactions: old.familyBudgetTransactions.filter(
+                (entry) => entry.id !== id,
+              ),
             }))
           }
         />
@@ -2586,6 +3012,15 @@ export default function Dashboard({
         <SettingsModal
           data={data}
           language={language}
+          demoMode={isDemo}
+          onClose={() => setModal(null)}
+          onUpdated={setData}
+        />
+      )}
+      {modal === "budget" && isOwner && (
+        <BudgetAdjustmentModal
+          language={language}
+          data={data}
           demoMode={isDemo}
           onClose={() => setModal(null)}
           onUpdated={setData}

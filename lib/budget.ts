@@ -6,7 +6,7 @@ const TIME_ZONE = "Europe/Amsterdam";
 
 export type TelegramLanguage = "en" | "nl" | "fa";
 
-function dateKey(value: Date | string) {
+export function budgetDateKey(value: Date | string) {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: TIME_ZONE,
     year: "numeric",
@@ -16,6 +16,10 @@ function dateKey(value: Date | string) {
   const part = (type: string) =>
     parts.find((item) => item.type === type)?.value ?? "";
   return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+export function budgetMonthKey(value: Date | string = new Date()) {
+  return budgetDateKey(value).slice(0, 7);
 }
 
 function daysInMonth(year: number, month: number) {
@@ -39,6 +43,7 @@ export type BudgetStatus = {
   plannedBudgetIncludingTodayCents: number;
   totalAvailableThroughMonthEndCents: number;
   recommendedDailyAverageCents: number;
+  adjustmentCents: number;
 };
 
 export function calculateBudgetStatus(
@@ -47,8 +52,9 @@ export function calculateBudgetStatus(
     "type" | "baseAmountCents" | "happenedAt"
   >[],
   now = new Date(),
+  adjustmentCents = 0,
 ): BudgetStatus {
-  const todayKey = dateKey(now);
+  const todayKey = budgetDateKey(now);
   const [year, month, day] = todayKey.split("-").map(Number);
   const monthPrefix = `${year}-${String(month).padStart(2, "0")}-`;
   const monthStart = `${monthPrefix}01`;
@@ -61,7 +67,7 @@ export function calculateBudgetStatus(
   const monthLength = daysInMonth(year, month);
 
   const eligible = transactions.filter((item) => {
-    const itemDate = dateKey(item.happenedAt);
+    const itemDate = budgetDateKey(item.happenedAt);
     return (
       item.type === "expense" &&
       itemDate >= effectiveStart &&
@@ -70,7 +76,7 @@ export function calculateBudgetStatus(
   });
 
   const todaySpentCents = eligible
-    .filter((item) => dateKey(item.happenedAt) === todayKey)
+    .filter((item) => budgetDateKey(item.happenedAt) === todayKey)
     .reduce((sum, item) => sum + item.baseAmountCents, 0);
   const monthSpentCents = eligible.reduce(
     (sum, item) => sum + item.baseAmountCents,
@@ -97,8 +103,8 @@ export function calculateBudgetStatus(
   const plannedBudgetIncludingTodayCents =
     remainingDaysIncludingToday * DAILY_FAMILY_BUDGET_CENTS;
   const totalAvailableThroughMonthEndCents = activeToday
-    ? remainingBudgetAfterTodayCents + dailyDifferenceCents
-    : remainingBudgetAfterTodayCents;
+    ? remainingBudgetAfterTodayCents + dailyDifferenceCents + adjustmentCents
+    : remainingBudgetAfterTodayCents + adjustmentCents;
   const recommendedDailyAverageCents = remainingDaysAfterToday
     ? Math.max(
         0,
@@ -138,6 +144,7 @@ export function calculateBudgetStatus(
     plannedBudgetIncludingTodayCents,
     totalAvailableThroughMonthEndCents,
     recommendedDailyAverageCents,
+    adjustmentCents,
   };
 }
 
@@ -165,7 +172,7 @@ export function telegramDateText(
   language: TelegramLanguage = "en",
   now = new Date(),
 ) {
-  const date = localizedDate(dateKey(now), language);
+  const date = localizedDate(budgetDateKey(now), language);
   if (language === "fa") return `📆 امروز · ${date}`;
   if (language === "nl") return `📆 Vandaag · ${date}`;
   return `📆 Today · ${date}`;
@@ -183,10 +190,11 @@ export function budgetTelegramText(
   const total = euro(status.totalAvailableThroughMonthEndCents);
   const future = euro(status.remainingBudgetAfterTodayCents);
   const todayDifference = euro(status.dailyDifferenceCents);
-  const showAverage =
-    status.remainingDaysAfterToday > 0 &&
-    status.totalAvailableThroughMonthEndCents <
-      status.plannedBudgetIncludingTodayCents;
+  const adjustment = euro(status.adjustmentCents);
+  const adjustmentPart = status.adjustmentCents
+    ? ` ${status.adjustmentCents > 0 ? "+" : "−"} ${adjustment}`
+    : "";
+  const showAverage = status.remainingDaysAfterToday > 0;
 
   if (language === "fa") {
     const daily =
@@ -196,11 +204,14 @@ export function budgetTelegramText(
           ? `🟢 امروز: ${euro(status.todaySpentCents)} خرج شده · ${todayDifference} برای امروز باقی مانده است.`
           : `🔴 امروز: ${euro(status.todaySpentCents)} خرج شده · ${todayDifference} بیشتر از سقف €20.00 امروز.`;
     const remaining = `📅 بعد از امروز: ${status.remainingDaysAfterToday} روز باقی مانده · ${future} با برنامهٔ روزانهٔ €20.00.`;
-    const totalLine = `💶 کل مبلغ در دسترس تا پایان ماه: ${future} ${operator} ${todayDifference} = ${total}.`;
+    const totalLine = `💶 کل مبلغ در دسترس تا پایان ماه: ${future} ${operator} ${todayDifference}${adjustmentPart} = ${total}.`;
+    const adjustmentLine = status.adjustmentCents
+      ? `⚙️ تعدیل بودجه توسط Owner: ${status.adjustmentCents > 0 ? "+" : "−"}${adjustment}.`
+      : "";
     const average = showAverage
       ? `💡 از فردا، مبلغ ${total} را میان ${status.remainingDaysAfterToday} روز باقی‌مانده تقسیم کنید: به‌طور میانگین حداکثر ${euro(status.recommendedDailyAverageCents)} در روز.`
       : "";
-    return [dateLine, daily, remaining, totalLine, average]
+    return [dateLine, daily, remaining, adjustmentLine, totalLine, average]
       .filter(Boolean)
       .join("\n");
   }
@@ -213,11 +224,14 @@ export function budgetTelegramText(
           ? `🟢 Vandaag: ${euro(status.todaySpentCents)} uitgegeven · ${todayDifference} vandaag beschikbaar.`
           : `🔴 Vandaag: ${euro(status.todaySpentCents)} uitgegeven · ${todayDifference} boven de daglimiet van €20.00.`;
     const remaining = `📅 Na vandaag: nog ${status.remainingDaysAfterToday} dagen · ${future} gepland met €20.00 per dag.`;
-    const totalLine = `💶 Totaal beschikbaar tot het einde van de maand: ${future} ${operator} ${todayDifference} = ${total}.`;
+    const totalLine = `💶 Totaal beschikbaar tot het einde van de maand: ${future} ${operator} ${todayDifference}${adjustmentPart} = ${total}.`;
+    const adjustmentLine = status.adjustmentCents
+      ? `⚙️ Budgetaanpassing door de eigenaar: ${status.adjustmentCents > 0 ? "+" : "−"}${adjustment}.`
+      : "";
     const average = showAverage
       ? `💡 Verdeel vanaf morgen ${total} over de resterende ${status.remainingDaysAfterToday} dagen: gemiddeld maximaal ${euro(status.recommendedDailyAverageCents)} per dag.`
       : "";
-    return [dateLine, daily, remaining, totalLine, average]
+    return [dateLine, daily, remaining, adjustmentLine, totalLine, average]
       .filter(Boolean)
       .join("\n");
   }
@@ -229,11 +243,14 @@ export function budgetTelegramText(
         ? `🟢 Today: ${euro(status.todaySpentCents)} spent · ${todayDifference} available today.`
         : `🔴 Today: ${euro(status.todaySpentCents)} spent · ${todayDifference} above today's €20.00 limit.`;
   const remaining = `📅 After today: ${status.remainingDaysAfterToday} days remain · ${future} planned at €20.00 per day.`;
-  const totalLine = `💶 Total available through month end: ${future} ${operator} ${todayDifference} = ${total}.`;
+  const totalLine = `💶 Total available through month end: ${future} ${operator} ${todayDifference}${adjustmentPart} = ${total}.`;
+  const adjustmentLine = status.adjustmentCents
+    ? `⚙️ Owner budget adjustment: ${status.adjustmentCents > 0 ? "+" : "−"}${adjustment}.`
+    : "";
   const average = showAverage
     ? `💡 From tomorrow, divide ${total} across the remaining ${status.remainingDaysAfterToday} days: an average of no more than ${euro(status.recommendedDailyAverageCents)} per day.`
     : "";
-  return [dateLine, daily, remaining, totalLine, average]
+  return [dateLine, daily, remaining, adjustmentLine, totalLine, average]
     .filter(Boolean)
     .join("\n");
 }

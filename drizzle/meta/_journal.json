@@ -50,6 +50,20 @@
       "when": 1786643767110,
       "tag": "0006_damp_proemial_gods",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1786693883133,
+      "tag": "0007_romantic_justin_hammer",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1786695751703,
+      "tag": "0008_exotic_the_hood",
+      "breakpoints": true
     }
   ]
 }

@@ -3,6 +3,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import { getDb } from "../db";
 import {
   expenseCategories,
+  households,
   members,
   telegramBotState,
   telegramConversationState,
@@ -13,6 +14,7 @@ import { enforceRateLimit, writeAudit } from "./security";
 import {
   budgetMonthlySummaryText,
   budgetTelegramText,
+  budgetMonthKey,
   calculateBudgetStatus,
   telegramDateText,
   type TelegramLanguage,
@@ -388,12 +390,15 @@ async function activeLink(chatId: string) {
   return { link, member };
 }
 
-async function memberBudgetStatus(householdId: string, memberId: string) {
+async function memberBudgetStatus(householdId: string) {
   const db = await getDb();
-  const [member] = await db
-    .select({ role: members.role })
-    .from(members)
-    .where(eq(members.id, memberId))
+  const [household] = await db
+    .select({
+      budgetAdjustmentCents: households.budgetAdjustmentCents,
+      budgetAdjustmentMonth: households.budgetAdjustmentMonth,
+    })
+    .from(households)
+    .where(eq(households.id, householdId))
     .limit(1);
   const items = await db
     .select({
@@ -405,39 +410,40 @@ async function memberBudgetStatus(householdId: string, memberId: string) {
     .where(
       and(
         eq(transactions.householdId, householdId),
-        ...(member?.role === "owner"
-          ? []
-          : [eq(transactions.memberId, memberId)]),
         isNull(transactions.deletedAt),
       ),
     );
+  const adjustmentCents =
+    household?.budgetAdjustmentMonth === budgetMonthKey()
+      ? household.budgetAdjustmentCents
+      : 0;
   return calculateBudgetStatus(
     items as Array<{
       type: "expense" | "income";
       baseAmountCents: number;
       happenedAt: string;
     }>,
+    new Date(),
+    adjustmentCents,
   );
 }
 
 async function memberBudgetText(
   householdId: string,
-  memberId: string,
   language: TelegramLanguage,
 ) {
   return budgetTelegramText(
-    await memberBudgetStatus(householdId, memberId),
+    await memberBudgetStatus(householdId),
     language,
   );
 }
 
 async function memberMonthlySummaryText(
   householdId: string,
-  memberId: string,
   language: TelegramLanguage,
 ) {
   return budgetMonthlySummaryText(
-    await memberBudgetStatus(householdId, memberId),
+    await memberBudgetStatus(householdId),
     language,
   );
 }
@@ -762,7 +768,6 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
       chatId,
       await memberBudgetText(
         linked.link.householdId,
-        linked.link.memberId,
         language,
       ),
       mainMenu(language),
@@ -778,7 +783,6 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
       chatId,
       await memberMonthlySummaryText(
         linked.link.householdId,
-        linked.link.memberId,
         language,
       ),
       mainMenu(language),
@@ -916,7 +920,7 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
     if (saved)
       await replyToTelegram(
         chatId,
-        `${copy.saved(amount, categoryDisplay(language, conversation.category))}\n\n${await memberBudgetText(linked.link.householdId, linked.link.memberId, language)}`,
+        `${copy.saved(amount, categoryDisplay(language, conversation.category))}\n\n${await memberBudgetText(linked.link.householdId, language)}`,
         mainMenu(language),
       );
     return;
@@ -967,7 +971,7 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
   if (inserted.length)
     await replyToTelegram(
       chatId,
-      `${copy.saved(amount, categoryDisplay(language, category), note)}\n\n${await memberBudgetText(linked.link.householdId, linked.link.memberId, language)}`,
+      `${copy.saved(amount, categoryDisplay(language, category), note)}\n\n${await memberBudgetText(linked.link.householdId, language)}`,
       mainMenu(language),
     );
 }

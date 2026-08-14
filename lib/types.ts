@@ -4,9 +4,12 @@ export type Member = {
   email: string;
   color: string;
   role: string;
+  canViewHousehold: boolean;
   status: "active" | "removed";
   telegramLinkCode: string;
   telegramLinkCodeExpiresAt?: string | null;
+  joinedAt?: string | null;
+  lastSeenAt?: string | null;
 };
 
 export type MembershipRequest = {
@@ -37,10 +40,22 @@ export type Transaction = {
 };
 
 export type DashboardData = {
-  household: { id: string; name: string; kind: string; baseCurrency: string; city: string };
+  household: {
+    id: string;
+    name: string;
+    kind: string;
+    baseCurrency: string;
+    city: string;
+    budgetAdjustmentCents: number;
+    budgetAdjustmentMonth?: string | null;
+  };
+  budgetAdjustmentCents: number;
   currentMemberId: string;
   members: Member[];
   transactions: Transaction[];
+  familyBudgetTransactions: Array<
+    Pick<Transaction, "id" | "type" | "baseAmountCents" | "happenedAt">
+  >;
   membershipRequests: MembershipRequest[];
   categories: Array<{ id: string; name: string }>;
   auditLogs: Array<{ id: string; action: string; summary: string; actorName: string; createdAt: string }>;

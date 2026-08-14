@@ -6,6 +6,8 @@ export const households = sqliteTable("households", {
   kind: text("kind").notNull().default("family"),
   baseCurrency: text("base_currency").notNull().default("EUR"),
   city: text("city").notNull().default("Hengelo"),
+  budgetAdjustmentCents: integer("budget_adjustment_cents").notNull().default(0),
+  budgetAdjustmentMonth: text("budget_adjustment_month"),
   createdAt: text("created_at").notNull(),
 });
 
@@ -19,9 +21,14 @@ export const members = sqliteTable(
     nameKey: text("name_key"),
     color: text("color").notNull().default("#1f6f5f"),
     role: text("role").notNull().default("member"),
+    canViewHousehold: integer("can_view_household", { mode: "boolean" })
+      .notNull()
+      .default(false),
     status: text("status").notNull().default("active"),
     telegramLinkCode: text("telegram_link_code").notNull(),
     telegramLinkCodeExpiresAt: text("telegram_link_code_expires_at"),
+    joinedAt: text("joined_at"),
+    lastSeenAt: text("last_seen_at"),
     createdAt: text("created_at").notNull(),
     removedAt: text("removed_at"),
   },
