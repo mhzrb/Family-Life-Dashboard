@@ -1,58 +1,137 @@
 # Family Life Dashboard
 
-A calm, privacy-minded household expense dashboard built for families who want
-one shared financial picture without losing individual accountability.
+**Phase 1 — a secure, multi-household expense and family-budget platform.**
 
-Family members have separate accounts and personal spending views, while the
-combined dashboard shows household totals, category breakdowns, recent
-activity, live currency rates, and local weather. Expenses can be added from
-the website or through a button-driven Telegram bot.
+Family Life Dashboard gives every household a private financial space without
+removing individual accountability. Members record their own expenses from the
+web dashboard or Telegram, while permissions determine whether they can see
+only their own activity or the household's combined view.
 
-## Highlights
+Phase 1 is deployed on Cloudflare and includes persistent SQL storage,
+role-based family management, configurable budgets, multi-currency support,
+historical analytics, and a multilingual Telegram workflow.
 
-- Separate member accounts and combined household analytics
-- Approval-based member invitations and removals
-- Expense entry in EUR, USD, CAD, and GBP
-- Live exchange rates and weather data from free public APIs
-- Permanent Telegram webhook with button-driven expense entry
-- Combined €20 daily household budget with daily and monthly status
-- Immediate green/red budget feedback on the website and in Telegram
-- One-time Telegram linking codes that expire after 24 hours
-- Custom categories shared between the dashboard and Telegram
-- Edit and soft-delete support for each member's own expenses
-- CSV and JSON exports for portable backups
-- Household audit trail for important security and data changes
-- Rate limiting, same-origin checks, validated inputs, and secret isolation
-- Installable responsive PWA with English and Dutch interfaces
-- Demo mode with temporary sample data
+## Public demo
+
+[Open the randomized public demo](https://family-life-dashboard-demo.mhmd-zarabieh.workers.dev/)
+
+The public demo uses temporary randomized sample data and has no connection to
+the private household database. Signing in redirects users to the separately
+protected dashboard.
+
+## Screenshots
+
+### Web dashboard
+
+![Family Life Dashboard public demo](docs/images/dashboard-demo.png)
+
+### Daily expense history
+
+![Daily calendar and expense history](docs/images/daily-history.png)
+
+### Telegram bot
+
+<img src="docs/images/telegram-bot.jpeg" alt="Family Expenses Telegram bot" width="380">
+
+## Phase 1 highlights
+
+- Separate private households with independent members, settings, and data
+- Owner-managed invitations, removals, and household-view permissions
+- Personal expense views plus an authorized `Everyone` view
+- Responsive daily calendar and month-by-month expense history
+- Web and Telegram expense capture with shared custom categories
+- English and Dutch web interface; English, Dutch, and Persian Telegram bot
+- Configurable household daily budget and base currency
+- EUR, USD, CAD, and GBP base and display currencies
+- Live exchange-rate conversion for alternative display currencies
+- Effective-dated budget changes: past days retain their original budget
+- Positive or negative daily carryover throughout each month
+- Owner adjustments that remain separate from ordinary daily carryover
+- Current-month guidance and historical month-over-month spending analytics
+- CSV and JSON exports, audit logs, soft deletion, and versioned migrations
+- Public randomized demo separated from authenticated household data
+
+## Budget behaviour
+
+The budget model is household-wide rather than per member. Every expense from
+every active member contributes to the same daily and monthly position.
+
+```text
+Previous-days balance
++ amount remaining today
++ planned budget after today
++/- owner adjustment
+= available amount through month end
+```
+
+Unused budget and overspending are carried forward only within the same month.
+The carryover resets when a new month begins.
+
+Daily-budget changes are effective from the date of the change. For example,
+if an owner changes the budget from EUR 20 to EUR 18 today, previous days stay
+calculated at EUR 20, while today, the remaining days, and future months use
+EUR 18 until another change is made.
+
+New households begin budget tracking on the day they are created. Their owner
+selects the daily budget and base currency during initial setup.
+
+## Currency model
+
+Each household chooses a base currency: EUR, USD, CAD, or GBP. Budgets,
+Telegram entries, carryover, and stored calculations use that base currency.
+
+The display-currency selector converts the same values for viewing without
+changing the household's accounting currency. If an owner changes the base
+currency, existing monetary values are converted so they are not reinterpreted
+as the same number in a different currency.
+
+## Access model
+
+- The first member of a new household becomes its owner.
+- Only the owner can add or remove members and change family settings.
+- New members initially see only their own expense details.
+- The owner can grant a member access to the combined `Everyone` view.
+- Members with combined access still cannot open another member's private view.
+- The owner can review and remove any household expense.
+- Telegram accounts are connected with expiring, single-use personal codes.
+
+Authentication is enforced with Cloudflare Access. Server routes validate the
+Access identity and apply household-scoped authorization before reading or
+changing data.
 
 ## Technology
 
 - TypeScript and React
 - Next.js-compatible Vinext runtime
 - Cloudflare Workers
-- Cloudflare D1 (SQLite-compatible SQL)
+- Cloudflare D1
 - Drizzle ORM and versioned SQL migrations
+- Cloudflare Access JWT validation
 - Telegram Bot API
+- Public weather and exchange-rate APIs
 
 ## Architecture
 
 ```text
-Browser / PWA
-      |
-      v
-Cloudflare Worker API  <------ Telegram secure webhook
-      |
-      +---- D1 SQL database
-      |
-      +---- Weather and currency APIs
+Authenticated browser / PWA
+            |
+            v
+   Dashboard Worker API -------- Weather and exchange-rate APIs
+            |
+            v
+       Cloudflare D1
+            ^
+            |
+     Telegram Worker <---------- Telegram Bot API
+
+Public browser ----------> Isolated randomized Demo Worker
 ```
 
-Every database query is scoped to a household. Authentication is expected to
-be enforced by Cloudflare Access, and authorization is checked again in the
-server routes before data is read or changed.
+The Telegram webhook runs through a separate Worker so the main application
+can remain protected by Cloudflare Access. Telegram requests are independently
+validated using Telegram's secret-token header.
 
-## Run locally
+## Local development
 
 Requirements: Node.js 22+, npm, and a Cloudflare account for D1-backed flows.
 
@@ -62,80 +141,72 @@ cp .dev.vars.example .dev.vars
 npm run dev
 ```
 
-Without authentication headers or a configured D1 database, the homepage stays
-in safe demo mode.
+Secrets belong only in `.dev.vars`, environment variables, or Cloudflare
+Secrets. Never commit real credentials.
 
-## Create the database
+## Database setup
+
+Create the D1 database and place the returned database ID in `wrangler.jsonc`:
 
 ```bash
 npx wrangler d1 create family-life-dashboard
-```
-
-Copy the returned database ID into `wrangler.jsonc`, then apply the migrations:
-
-```bash
 npm run db:migrate
 ```
 
-## Configure Telegram
+Migrations preserve previous budget rules and monthly adjustments, allowing
+historical reports to use the settings that were active at the time.
 
-Create a bot with `@BotFather`, then store these values as Worker secrets:
-
-```bash
-npx wrangler secret put TELEGRAM_BOT_TOKEN
-npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
-```
-
-After deployment, the household owner enables permanent delivery from the
-Telegram panel. The bot then receives updates even when the dashboard is
-closed.
-
-If the dashboard is protected with Cloudflare Access, create a separate Access
-application for the exact `/api/telegram` path with a **Bypass** policy. Keep
-every other route behind an **Allow** policy limited to family email addresses.
-The webhook itself remains protected by Telegram's secret-token header, and a
-request without that header is rejected.
-
-## Deploy
+## Deploy the dashboard
 
 ```bash
+npm run build
+npx tsc --noEmit
 npm run deploy
 ```
 
-Cloudflare provides a free `workers.dev` address for testing. For a private
-family deployment, protect the Worker with Cloudflare Access and allow only the
-family members' email addresses.
+Configure Cloudflare Access for the private dashboard and store `POLICY_AUD`
+and `TEAM_DOMAIN` as Worker secrets.
+
+## Deploy the Telegram Worker
+
+Store the Telegram credentials on the dedicated Worker configuration:
+
+```bash
+npx wrangler secret put TELEGRAM_BOT_TOKEN --config wrangler.telegram.jsonc
+npx wrangler secret put TELEGRAM_WEBHOOK_SECRET --config wrangler.telegram.jsonc
+npx wrangler deploy --config wrangler.telegram.jsonc
+```
+
+Tokens and secret values are never included in this repository.
 
 ## Quality checks
 
 ```bash
-npm test
+npm run build
+npx tsc --noEmit
+npm run lint
 ```
-
-The CI workflow runs linting and a production build on every pull request and
-push to `main`.
 
 ## Data and privacy
 
-- Real credentials belong only in Cloudflare secrets.
-- `.dev.vars`, `.env*`, private keys, build output, and local Worker state are
-  ignored by Git.
-- Telegram tokens and linking codes are never included in exports.
-- Deleted expenses are retained as soft-deleted records for auditability but
-  are excluded from dashboards and exports.
-- JSON exports provide portable user-controlled backups; D1 Time Travel adds
-  platform-level recovery for recent database changes.
+- Every operational query is scoped to a household.
+- Member-level visibility is enforced by server-side authorization.
+- Real credentials and local environment files are ignored by Git.
+- Telegram tokens and linking codes are excluded from exports.
+- Deleted expenses remain soft-deleted for auditability but are excluded from
+  dashboards and exports.
+- JSON and CSV exports provide portable, user-controlled backups.
 
 See [SECURITY.md](SECURITY.md) for the security model and reporting process.
 
-## Roadmap
+## Phase 2 roadmap
 
-- Configurable category budgets and proactive Telegram alerts
-- Weekly and monthly spending insights
-- Receipt OCR and voice input
-- Shared family calendar and recurring bills
-- Automated scheduled encrypted backups
-- Multi-family onboarding and household switching
+- Recurring expenses and bills
+- Category-specific budgets and alerts
+- Shared household calendar and tasks
+- Receipt and voice-assisted expense capture
+- Scheduled summaries and proactive notifications
+- Expanded backup and recovery controls
 
 ## License
 
