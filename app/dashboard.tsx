@@ -10,7 +10,11 @@ import {
 } from "react";
 import { createDemoData } from "../lib/demo-data";
 import type { DashboardData, Member, Transaction } from "../lib/types";
-import { calculateBudgetStatus } from "../lib/budget";
+import {
+  budgetMonthKey,
+  calculateBudgetStatus,
+  monthlyBudgetPlanCents,
+} from "../lib/budget";
 
 type Language = "en" | "nl";
 type Currency = "EUR" | "USD" | "CAD" | "GBP";
@@ -181,6 +185,12 @@ const copy: Record<Language, Record<string, string>> = {
     allMonths: "All months",
     today: "Today",
     yesterday: "Yesterday",
+    selectedDay: "Selected day",
+    previousDay: "Previous day",
+    nextDay: "Next day",
+    backToToday: "Back to today",
+    dailyExpenses: "Expenses on this day",
+    noExpensesOnDay: "No expenses were recorded on this day.",
     pendingChanges: "Pending approvals",
     noPending: "No changes are waiting for approval.",
     remove: "Remove",
@@ -319,6 +329,12 @@ const copy: Record<Language, Record<string, string>> = {
     allMonths: "Alle maanden",
     today: "Vandaag",
     yesterday: "Gisteren",
+    selectedDay: "Geselecteerde dag",
+    previousDay: "Vorige dag",
+    nextDay: "Volgende dag",
+    backToToday: "Terug naar vandaag",
+    dailyExpenses: "Uitgaven op deze dag",
+    noExpensesOnDay: "Op deze dag zijn geen uitgaven geregistreerd.",
     pendingChanges: "Wacht op goedkeuring",
     noPending: "Er wachten geen wijzigingen op goedkeuring.",
     remove: "Verwijderen",
@@ -411,6 +427,37 @@ function categoryColor(category: string) {
 function monthKey(date: Date) {
   return `${date.getFullYear()}-${date.getMonth()}`;
 }
+function expenseDayKey(value: Date | string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Amsterdam",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(typeof value === "string" ? new Date(value) : value);
+  const part = (type: string) =>
+    parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+function dateFromDayKey(key: string) {
+  return new Date(`${key}T12:00:00Z`);
+}
+function shiftDayKey(key: string, offset: number) {
+  const value = dateFromDayKey(key);
+  value.setUTCDate(value.getUTCDate() + offset);
+  return value.toISOString().slice(0, 10);
+}
+function readableDay(key: string, language: Language) {
+  return dateFromDayKey(key).toLocaleDateString(
+    language === "nl" ? "nl-NL" : "en-GB",
+    {
+      timeZone: "UTC",
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    },
+  );
+}
 function monthFromKey(key: string) {
   const [year, month] = key.split("-").map(Number);
   return new Date(year, month, 1);
@@ -428,6 +475,18 @@ function convertedCents(
 ) {
   return Math.round(
     baseCents * (currency === "EUR" ? 1 : (rates?.[currency] ?? 1)),
+  );
+}
+function ratesFromBase(
+  eurRates: Record<string, number> | undefined,
+  baseCurrency: Currency,
+) {
+  if (!eurRates) return undefined;
+  const eurValue = (currency: Currency) =>
+    currency === "EUR" ? 1 : (eurRates[currency] ?? 1);
+  const base = eurValue(baseCurrency);
+  return Object.fromEntries(
+    displayCurrencies.map((currency) => [currency, eurValue(currency) / base]),
   );
 }
 function money(
@@ -451,6 +510,87 @@ function weatherLabel(code: number | undefined, language: Language) {
   if (code <= 67) return { icon: "☂", label: t.rain };
   if (code <= 77) return { icon: "❄", label: t.snow };
   return { icon: "ϟ", label: t.showers };
+}
+
+function ExpenseCalendar({
+  selectedDay,
+  expenseDays,
+  language,
+  onSelect,
+  onClose,
+}: {
+  selectedDay: string;
+  expenseDays: Set<string>;
+  language: Language;
+  onSelect: (day: string) => void;
+  onClose: () => void;
+}) {
+  const [viewMonth, setViewMonth] = useState(selectedDay.slice(0, 7));
+  const todayKey = expenseDayKey(new Date());
+  const [year, month] = viewMonth.split("-").map(Number);
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const firstWeekday = new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
+  const mondayOffset = (firstWeekday + 6) % 7;
+  const cells: Array<number | null> = [
+    ...Array.from({ length: mondayOffset }, () => null),
+    ...Array.from({ length: daysInMonth }, (_, index) => index + 1),
+  ];
+  while (cells.length % 7) cells.push(null);
+  const weekdays =
+    language === "nl"
+      ? ["Ma", "Di", "Wo", "Do", "Vr", "Za", "Zo"]
+      : ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+  function moveMonth(offset: number) {
+    const value = new Date(Date.UTC(year, month - 1 + offset, 1));
+    setViewMonth(
+      `${value.getUTCFullYear()}-${String(value.getUTCMonth() + 1).padStart(2, "0")}`,
+    );
+  }
+  return (
+    <div className="expense-calendar" role="dialog" aria-label={language === "nl" ? "Kies een dag" : "Choose a day"}>
+      <div className="calendar-head">
+        <button type="button" onClick={() => moveMonth(-1)} aria-label={language === "nl" ? "Vorige maand" : "Previous month"}>‹</button>
+        <strong>
+          {dateFromDayKey(`${viewMonth}-01`).toLocaleDateString(
+            language === "nl" ? "nl-NL" : "en-GB",
+            { timeZone: "UTC", month: "long", year: "numeric" },
+          )}
+        </strong>
+        <button
+          type="button"
+          onClick={() => moveMonth(1)}
+          disabled={viewMonth >= todayKey.slice(0, 7)}
+          aria-label={language === "nl" ? "Volgende maand" : "Next month"}
+        >›</button>
+      </div>
+      <div className="calendar-grid calendar-weekdays">
+        {weekdays.map((day) => <span key={day}>{day}</span>)}
+      </div>
+      <div className="calendar-grid">
+        {cells.map((day, index) => {
+          if (!day) return <span key={`empty-${index}`} />;
+          const key = `${viewMonth}-${String(day).padStart(2, "0")}`;
+          const future = key > todayKey;
+          return (
+            <button
+              type="button"
+              key={key}
+              className={`${key === selectedDay ? "selected" : ""} ${expenseDays.has(key) ? "has-expense" : ""}`}
+              disabled={future}
+              onClick={() => onSelect(key)}
+              aria-label={readableDay(key, language)}
+            >
+              {day}
+              {expenseDays.has(key) && <i />}
+            </button>
+          );
+        })}
+      </div>
+      <button type="button" className="calendar-close" onClick={onClose}>
+        {language === "nl" ? "Sluiten" : "Close"}
+      </button>
+    </div>
+  );
 }
 
 function Modal({
@@ -514,7 +654,9 @@ function AddExpenseModal({
 }) {
   const t = copy[language];
   const [amount, setAmount] = useState("");
-  const [currency, setCurrency] = useState<Currency>("EUR");
+  const [currency, setCurrency] = useState<Currency>(
+    data.household.baseCurrency as Currency,
+  );
   const [category, setCategory] = useState("Groceries");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
@@ -525,12 +667,15 @@ function AddExpenseModal({
     setSaving(true);
     setError("");
     const numericAmount = Number(amount);
-    const eurRate = currency === "EUR" ? 1 : 1 / (rates?.[currency] ?? 1);
+    const baseRate =
+      currency === data.household.baseCurrency
+        ? 1
+        : 1 / (rates?.[currency] ?? 1);
     const draft: Transaction = {
       id: clientId(),
       memberId: data.currentMemberId,
       amountCents: Math.round(numericAmount * 100),
-      baseAmountCents: Math.round(numericAmount * eurRate * 100),
+      baseAmountCents: Math.round(numericAmount * baseRate * 100),
       currency,
       category,
       note: note || categoryLabel(language, category),
@@ -553,7 +698,7 @@ function AddExpenseModal({
           category,
           note,
           currency,
-          eurRate,
+          baseRate,
         }),
       });
       if (!response.ok)
@@ -1614,6 +1759,7 @@ function ActivityModal({
   isOwner,
   language,
   displayCurrency,
+  baseCurrency,
   rates,
   onClose,
   onEdit,
@@ -1624,6 +1770,7 @@ function ActivityModal({
   isOwner: boolean;
   language: Language;
   displayCurrency: Currency;
+  baseCurrency: Currency;
   rates?: Record<string, number>;
   onClose: () => void;
   onEdit: (item: Transaction) => void;
@@ -1637,41 +1784,29 @@ function ActivityModal({
   const monthKeys = Array.from(
     new Set(
       sortedItems.map((item) => {
-        const date = new Date(item.happenedAt);
-        return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+        return expenseDayKey(item.happenedAt).slice(0, 7);
       }),
     ),
   );
   const filteredItems = sortedItems.filter((item) => {
     if (selectedMonth === "all") return true;
-    const date = new Date(item.happenedAt);
-    return (
-      `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}` ===
-      selectedMonth
-    );
+    return expenseDayKey(item.happenedAt).slice(0, 7) === selectedMonth;
   });
   const groups = Array.from(
     filteredItems.reduce((grouped, item) => {
-      const date = new Date(item.happenedAt);
-      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+      const key = expenseDayKey(item.happenedAt);
       const current = grouped.get(key) ?? [];
       current.push(item);
       grouped.set(key, current);
       return grouped;
     }, new Map<string, Transaction[]>()),
   );
-  const localDayKey = (date: Date) =>
-    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-  const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 1);
+  const today = expenseDayKey(new Date());
+  const yesterday = shiftDayKey(today, -1);
   const dayLabel = (key: string) => {
-    if (key === localDayKey(today)) return t.today;
-    if (key === localDayKey(yesterday)) return t.yesterday;
-    return new Date(`${key}T12:00:00`).toLocaleDateString(
-      language === "nl" ? "nl-NL" : "en-GB",
-      { weekday: "long", day: "numeric", month: "long", year: "numeric" },
-    );
+    if (key === today) return t.today;
+    if (key === yesterday) return t.yesterday;
+    return readableDay(key, language);
   };
   return (
     <Modal
@@ -1745,7 +1880,7 @@ function ActivityModal({
                         { hour: "2-digit", minute: "2-digit" },
                       )}
                       {` · ${item.source === "telegram" ? "Telegram" : "Web"}`}
-                      {item.currency !== "EUR"
+                      {item.currency !== baseCurrency
                         ? ` · ${currencySymbols[item.currency as Currency] ?? item.currency}${(item.amountCents / 100).toFixed(2)} ${t.entered}`
                         : ""}
                     </span>
@@ -1796,26 +1931,34 @@ function ActivityModal({
 function BudgetCard({
   transactions,
   adjustmentCents,
+  dailyBudgetRules,
+  baseCurrency,
   language,
   displayCurrency,
   rates,
   isOwner,
   onAdjust,
+  onConfigure,
 }: {
   transactions: Array<
     Pick<Transaction, "type" | "baseAmountCents" | "happenedAt">
   >;
   adjustmentCents: number;
+  dailyBudgetRules: DashboardData["dailyBudgetRules"];
+  baseCurrency: Currency;
   language: Language;
   displayCurrency: Currency;
   rates?: Record<string, number>;
   isOwner: boolean;
   onAdjust: () => void;
+  onConfigure: () => void;
 }) {
   const status = calculateBudgetStatus(
     transactions,
     new Date(),
     adjustmentCents,
+    dailyBudgetRules,
+    baseCurrency,
   );
   const budgetMoney = (cents: number) =>
     money(Math.abs(cents), displayCurrency, rates, language, 2);
@@ -1842,6 +1985,10 @@ function BudgetCard({
     language === "nl"
       ? `Na vandaag: ${status.remainingDaysAfterToday} dagen · ${budgetMoney(status.remainingBudgetAfterTodayCents)} gepland met ${budgetMoney(status.dailyBudgetCents)} per dag`
       : `After today: ${status.remainingDaysAfterToday} days · ${budgetMoney(status.remainingBudgetAfterTodayCents)} planned at ${budgetMoney(status.dailyBudgetCents)} per day`;
+  const carryoverText =
+    language === "nl"
+      ? `Saldo van eerdere dagen: ${signed(status.previousDaysCarryoverCents)}`
+      : `Balance carried from previous days: ${signed(status.previousDaysCarryoverCents)}`;
   const averageText =
     status.remainingDaysAfterToday === 0
       ? language === "nl"
@@ -1873,10 +2020,12 @@ function BudgetCard({
           {totalMoney(status.totalAvailableThroughMonthEndCents)}{" "}
           <small>{language === "nl" ? "beschikbaar" : "available"}</small>
         </b>
+        <p>{carryoverText}</p>
         <p>{remainingText}</p>
         <p>
           {budgetMoney(status.remainingBudgetAfterTodayCents)}{" "}
           {signed(status.dailyDifferenceCents)}{" "}
+          {signed(status.previousDaysCarryoverCents)}{" "}
           {status.adjustmentCents
             ? `${signed(status.adjustmentCents)} `
             : ""}
@@ -1884,11 +2033,18 @@ function BudgetCard({
           {averageText}
         </p>
         {isOwner && (
-          <button className="budget-adjust-button" onClick={onAdjust}>
-            {language === "nl"
-              ? "Budget aanpassen"
-              : "Adjust remaining budget"}
-          </button>
+          <div className="budget-owner-actions">
+            <button className="budget-adjust-button" onClick={onAdjust}>
+              {language === "nl"
+                ? "Resterend budget aanpassen"
+                : "Adjust remaining budget"}
+            </button>
+            <button className="budget-adjust-button" onClick={onConfigure}>
+              {language === "nl"
+                ? "Dagbudget en basisvaluta"
+                : "Daily budget & base currency"}
+            </button>
+          </div>
         )}
       </div>
     </section>
@@ -1908,6 +2064,8 @@ function BudgetAdjustmentModal({
   onClose: () => void;
   onUpdated: (data: DashboardData) => void;
 }) {
+  const baseCurrency = data.household.baseCurrency as Currency;
+  const baseSymbol = currencySymbols[baseCurrency];
   const [amount, setAmount] = useState(
     (data.budgetAdjustmentCents / 100).toFixed(2),
   );
@@ -1926,6 +2084,12 @@ function BudgetAdjustmentModal({
       onUpdated({
         ...data,
         budgetAdjustmentCents: cents,
+        monthlyBudgetAdjustments: [
+          ...data.monthlyBudgetAdjustments.filter(
+            (item) => item.month !== budgetMonthKey(),
+          ),
+          { month: budgetMonthKey(), adjustmentCents: cents },
+        ],
         household: { ...data.household, budgetAdjustmentCents: cents },
       });
       onClose();
@@ -1964,7 +2128,11 @@ function BudgetAdjustmentModal({
       </p>
       <form className="expense-form" onSubmit={save}>
         <label>
-          <span>{language === "nl" ? "Aanpassing in EUR" : "Adjustment in EUR"}</span>
+          <span>
+            {language === "nl"
+              ? `Aanpassing in ${baseCurrency}`
+              : `Adjustment in ${baseCurrency}`}
+          </span>
           <input
             required
             inputMode="decimal"
@@ -1974,8 +2142,8 @@ function BudgetAdjustmentModal({
           />
         </label>
         <div className="budget-examples">
-          <button type="button" onClick={() => setAmount("10.00")}>+ €10</button>
-          <button type="button" onClick={() => setAmount("-30.00")}>− €30</button>
+          <button type="button" onClick={() => setAmount("10.00")}>+ {baseSymbol}10</button>
+          <button type="button" onClick={() => setAmount("-30.00")}>− {baseSymbol}30</button>
           <button type="button" onClick={() => setAmount("0.00")}>
             {language === "nl" ? "Wissen" : "Clear"}
           </button>
@@ -2000,14 +2168,164 @@ function BudgetAdjustmentModal({
   );
 }
 
+function FamilyBudgetSettingsModal({
+  language,
+  data,
+  demoMode,
+  onClose,
+  onUpdated,
+}: {
+  language: Language;
+  data: DashboardData;
+  demoMode: boolean;
+  onClose: () => void;
+  onUpdated: (data: DashboardData) => void;
+}) {
+  const today = expenseDayKey(new Date());
+  const currentRule = [...data.dailyBudgetRules]
+    .filter((item) => item.effectiveDate <= today)
+    .sort((a, b) => b.effectiveDate.localeCompare(a.effectiveDate))[0];
+  const [dailyBudget, setDailyBudget] = useState(
+    ((currentRule?.dailyBudgetCents ?? 2_000) / 100).toFixed(2),
+  );
+  const [baseCurrency, setBaseCurrency] = useState<Currency>(
+    data.household.baseCurrency as Currency,
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    const amount = Number(dailyBudget);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setError(
+        language === "nl"
+          ? "Voer een dagbudget groter dan nul in."
+          : "Enter a daily budget greater than zero.",
+      );
+      return;
+    }
+    if (demoMode) {
+      const cents = Math.round(amount * 100);
+      onUpdated({
+        ...data,
+        household: {
+          ...data.household,
+          baseCurrency,
+          setupCompletedAt: new Date().toISOString(),
+        },
+        dailyBudgetRules: [
+          ...data.dailyBudgetRules.filter((item) => item.effectiveDate !== today),
+          { effectiveDate: today, dailyBudgetCents: cents },
+        ],
+      });
+      onClose();
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const response = await fetch("/api/dashboard", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "updateFamilyBudgetSettings",
+          dailyBudget: amount,
+          baseCurrency,
+        }),
+      });
+      const result = (await response.json()) as DashboardData & { error?: string };
+      if (!response.ok)
+        throw new Error(result.error || "Could not update family budget settings");
+      onUpdated(result);
+      onClose();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not update family budget settings",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal
+      eyebrow={language === "nl" ? "GEZINSINSTELLINGEN" : "FAMILY SETUP"}
+      title={
+        language === "nl"
+          ? "Dagbudget en basisvaluta"
+          : "Daily budget and base currency"
+      }
+      closeLabel={language === "nl" ? "Sluiten" : "Close"}
+      onClose={onClose}
+    >
+      <p className="modal-copy">
+        {language === "nl"
+          ? "De wijziging geldt vanaf vandaag. Eerdere dagen en hun positieve of negatieve saldo blijven ongewijzigd. Het nieuwe dagbudget blijft ook in volgende maanden gelden totdat de eigenaar het opnieuw wijzigt."
+          : "The change starts today. Previous days and their positive or negative balance stay unchanged. The new daily budget also continues into future months until the owner changes it again."}
+      </p>
+      <form className="expense-form" onSubmit={save}>
+        <div className="form-grid">
+          <label>
+            <span>{language === "nl" ? "Dagbudget" : "Daily budget"}</span>
+            <input
+              required
+              min="0.01"
+              step="0.01"
+              inputMode="decimal"
+              value={dailyBudget}
+              onChange={(event) => setDailyBudget(event.target.value)}
+            />
+          </label>
+          <label>
+            <span>{language === "nl" ? "Basisvaluta" : "Base currency"}</span>
+            <select
+              value={baseCurrency}
+              onChange={(event) => setBaseCurrency(event.target.value as Currency)}
+            >
+              {displayCurrencies.map((currency) => (
+                <option key={currency} value={currency}>{currency}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <p className="modal-copy">
+          {language === "nl"
+            ? "De basisvaluta wordt gebruikt voor budgetten, Telegram en berekeningen. De weergavevaluta bovenaan verandert alleen hoe bedragen worden getoond. Bij een wijziging van de basisvaluta worden bestaande bedragen omgerekend om hun waarde te behouden."
+            : "The base currency is used for budgets, Telegram, and calculations. Display currency at the top only changes how amounts are shown. If the base currency changes, existing amounts are converted to preserve their value."}
+        </p>
+        {error && <p className="form-error">{error}</p>}
+        <div className="modal-actions">
+          {data.household.setupCompletedAt && (
+            <button type="button" className="text-button" onClick={onClose}>
+              {language === "nl" ? "Annuleren" : "Cancel"}
+            </button>
+          )}
+          <button className="primary-button" disabled={saving}>
+            {saving
+              ? language === "nl" ? "Opslaan…" : "Saving…"
+              : language === "nl" ? "Instellingen opslaan" : "Save settings"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 function MonthlyHistoryCard({
   transactions,
+  monthlyBudgetAdjustments,
+  dailyBudgetRules,
   language,
   formatMoney,
   scopeName,
   familyView,
 }: {
   transactions: Transaction[];
+  monthlyBudgetAdjustments: DashboardData["monthlyBudgetAdjustments"];
+  dailyBudgetRules: DashboardData["dailyBudgetRules"];
   language: Language;
   formatMoney: (cents: number, digits?: number) => string;
   scopeName: string;
@@ -2042,6 +2360,15 @@ function MonthlyHistoryCard({
     1,
   );
   const selectedTotal = monthlyTotals.get(selectedMonth) ?? 0;
+  const selectedAdjustment =
+    monthlyBudgetAdjustments.find((item) => item.month === selectedMonth)
+      ?.adjustmentCents ?? 0;
+  const selectedPlan = monthlyBudgetPlanCents(
+    selectedMonth,
+    selectedAdjustment,
+    dailyBudgetRules,
+  );
+  const selectedBalance = selectedPlan - selectedTotal;
   const previousTotal = monthlyTotals.get(monthKey(previousDate)) ?? 0;
   const reduction = previousTotal
     ? Math.round(((previousTotal - selectedTotal) / previousTotal) * 100)
@@ -2096,6 +2423,21 @@ function MonthlyHistoryCard({
                 ? `${Math.abs(reduction)}% meer uitgegeven dan ${monthLabel(monthKey(previousDate), language)}.`
                 : `${Math.abs(reduction)}% more spent than ${monthLabel(monthKey(previousDate), language)}.`}
         </p>
+        {familyView && selectedPlan > 0 && (
+          <p>
+            {selectedMonth === currentKey
+              ? language === "nl"
+                ? `${formatMoney(selectedBalance, 2)} blijft beschikbaar van het maandbudget van ${formatMoney(selectedPlan, 2)}.`
+                : `${formatMoney(selectedBalance, 2)} remains available from the ${formatMoney(selectedPlan, 2)} monthly plan.`
+              : selectedBalance >= 0
+                ? language === "nl"
+                  ? `Maand afgesloten met ${formatMoney(selectedBalance, 2)} onder het plan van ${formatMoney(selectedPlan, 2)}.`
+                  : `Month closed ${formatMoney(selectedBalance, 2)} under the ${formatMoney(selectedPlan, 2)} plan.`
+                : language === "nl"
+                  ? `Maand afgesloten met ${formatMoney(Math.abs(selectedBalance), 2)} boven het plan van ${formatMoney(selectedPlan, 2)}.`
+                  : `Month closed ${formatMoney(Math.abs(selectedBalance), 2)} over the ${formatMoney(selectedPlan, 2)} plan.`}
+          </p>
+        )}
       </div>
       <div className="history-bars" role="img" aria-label={language === "nl" ? "Uitgaven per maand" : "Spending by month"}>
         {chartMonths.map((key) => {
@@ -2136,6 +2478,7 @@ export default function Dashboard({
     | "activity"
     | "settings"
     | "budget"
+    | "budgetSettings"
     | null
   >(null);
   const [selectedTransaction, setSelectedTransaction] =
@@ -2149,13 +2492,25 @@ export default function Dashboard({
     webhookReady: false,
   });
   const [language, setLanguage] = useState<Language>("en");
-  const [displayCurrency, setDisplayCurrency] = useState<Currency>("EUR");
+  const [displayCurrency, setDisplayCurrency] = useState<Currency>(
+    data.household.baseCurrency as Currency,
+  );
   const [scope, setScope] = useState<string>("family");
+  const [selectedDay, setSelectedDay] = useState(() => expenseDayKey(new Date()));
+  const [calendarOpen, setCalendarOpen] = useState(false);
   const [publicDemo, setPublicDemo] = useState(false);
   const [secureAppUrl, setSecureAppUrl] = useState("");
   const testModeRef = useRef(false);
   const t = copy[language];
-  const rates = external?.rates;
+  const referenceRates = external?.rates;
+  const rates = useMemo(
+    () =>
+      ratesFromBase(
+        referenceRates,
+        data.household.baseCurrency as Currency,
+      ),
+    [referenceRates, data.household.baseCurrency],
+  );
   const formatMoney = useCallback(
     (cents: number, digits = 0) =>
       money(cents, displayCurrency, rates, language, digits),
@@ -2172,6 +2527,15 @@ export default function Dashboard({
         setData(fresh);
         setIsDemo(false);
         setLastSync(Date.now());
+        const signedInMember = fresh.members.find(
+          (member) => member.id === fresh.currentMemberId,
+        );
+        if (
+          signedInMember?.role === "owner" &&
+          !fresh.household.setupCompletedAt
+        ) {
+          setModal("budgetSettings");
+        }
       }
     } catch {
       /* sample view remains available */
@@ -2232,6 +2596,8 @@ export default function Dashboard({
     setScope("family");
     setIsDemo(true);
     setShowTelegram(false);
+    setSelectedDay(expenseDayKey(new Date()));
+    setCalendarOpen(false);
   }
   function exitTestMode() {
     if (publicDemo) {
@@ -2278,6 +2644,31 @@ export default function Dashboard({
       scope,
     ],
   );
+  const selectedDayTransactions = useMemo(
+    () =>
+      visibleTransactions.filter(
+        (item) =>
+          item.type === "expense" && expenseDayKey(item.happenedAt) === selectedDay,
+      ),
+    [visibleTransactions, selectedDay],
+  );
+  const expenseDays = useMemo(
+    () =>
+      new Set(
+        visibleTransactions
+          .filter((item) => item.type === "expense")
+          .map((item) => expenseDayKey(item.happenedAt)),
+      ),
+    [visibleTransactions],
+  );
+  const todayKey = expenseDayKey(new Date());
+  const selectedScopeName =
+    canViewHousehold && scope === "family"
+      ? t.everyone
+      : activeMembers.find(
+          (member) =>
+            member.id === (isOwner ? scope : data.currentMemberId),
+        )?.name ?? currentMember?.name ?? "";
   const now = new Date();
   const previous = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const currentTotal = visibleTransactions
@@ -2483,15 +2874,65 @@ export default function Dashboard({
       <main className="dashboard-main" id="overview">
         <header className="topbar">
           <div>
-            <p className="date-line">
-              {language === "nl" ? "VANDAAG" : "TODAY"} ·{" "}
-              {now.toLocaleDateString(language === "nl" ? "nl-NL" : "en-GB", {
-                weekday: "long",
-                day: "numeric",
-                month: "long",
-                year: "numeric",
-              })}
-            </p>
+            <div className="date-navigator">
+              <button
+                type="button"
+                className="date-arrow"
+                onClick={() => {
+                  setSelectedDay((day) => shiftDayKey(day, -1));
+                  setCalendarOpen(false);
+                }}
+                aria-label={t.previousDay}
+              >
+                ‹
+              </button>
+              <button
+                type="button"
+                className="date-line date-trigger"
+                onClick={() => setCalendarOpen((open) => !open)}
+                aria-expanded={calendarOpen}
+              >
+                {selectedDay === todayKey ? t.today : t.selectedDay} ·{" "}
+                {readableDay(selectedDay, language)}
+                <span aria-hidden="true">▾</span>
+              </button>
+              <button
+                type="button"
+                className="date-arrow"
+                disabled={selectedDay >= todayKey}
+                onClick={() => {
+                  setSelectedDay((day) => shiftDayKey(day, 1));
+                  setCalendarOpen(false);
+                }}
+                aria-label={t.nextDay}
+              >
+                ›
+              </button>
+              {selectedDay !== todayKey && (
+                <button
+                  type="button"
+                  className="today-shortcut"
+                  onClick={() => {
+                    setSelectedDay(todayKey);
+                    setCalendarOpen(false);
+                  }}
+                >
+                  {t.backToToday}
+                </button>
+              )}
+              {calendarOpen && (
+                <ExpenseCalendar
+                  selectedDay={selectedDay}
+                  expenseDays={expenseDays}
+                  language={language}
+                  onSelect={(day) => {
+                    setSelectedDay(day);
+                    setCalendarOpen(false);
+                  }}
+                  onClose={() => setCalendarOpen(false)}
+                />
+              )}
+            </div>
             <h1>{`${t.hello}, ${currentMember?.name ?? ""}.`}</h1>
             <p>{t.subtitle}</p>
           </div>
@@ -2567,6 +3008,91 @@ export default function Dashboard({
             </button>
           </div>
         )}
+        <section className="panel daily-ledger" aria-live="polite">
+          <div className="panel-head daily-ledger-head">
+            <div>
+              <span className="eyebrow">{t.dailyExpenses}</span>
+              <h2>{readableDay(selectedDay, language)}</h2>
+              <p>
+                {selectedScopeName} · {selectedDayTransactions.length}{" "}
+                {language === "nl" ? "uitgaven" : "expenses"}
+              </p>
+            </div>
+            <strong>
+              −
+              {formatMoney(
+                selectedDayTransactions.reduce(
+                  (sum, item) => sum + item.baseAmountCents,
+                  0,
+                ),
+                2,
+              )}
+            </strong>
+          </div>
+          <div className="daily-transaction-list">
+            {selectedDayTransactions.map((item) => {
+              const member = data.members.find(
+                (person) => person.id === item.memberId,
+              );
+              const color = categoryColor(item.category);
+              return (
+                <div className="transaction" key={item.id}>
+                  <span
+                    className="category-icon"
+                    style={{ color, background: `${color}18` }}
+                  >
+                    {categoryIcons[item.category] ?? "•"}
+                  </span>
+                  <div className="transaction-copy">
+                    <b>{item.note}</b>
+                    <span>
+                      {categoryLabel(language, item.category)} · {member?.name} ·{" "}
+                      {new Date(item.happenedAt).toLocaleTimeString(
+                        language === "nl" ? "nl-NL" : "en-GB",
+                        { hour: "2-digit", minute: "2-digit" },
+                      )}
+                      {` · ${item.source === "telegram" ? "Telegram" : "Web"}`}
+                    </span>
+                  </div>
+                  {(item.memberId === data.currentMemberId || isOwner) && (
+                    <button
+                      className="edit-transaction"
+                      onClick={() => {
+                        setSelectedTransaction(item);
+                        setModal("edit");
+                      }}
+                    >
+                      {item.memberId === data.currentMemberId
+                        ? language === "nl"
+                          ? "Bewerken"
+                          : "Edit"
+                        : language === "nl"
+                          ? "Beheren"
+                          : "Manage"}
+                    </button>
+                  )}
+                  <span
+                    className="mini-avatar"
+                    title={member?.name}
+                    aria-label={member?.name}
+                    style={{ background: member?.color }}
+                  >
+                    {initials(member?.name ?? "?")}
+                  </span>
+                  <strong className="transaction-amount">
+                    −{formatMoney(item.baseAmountCents, 2)}
+                  </strong>
+                </div>
+              );
+            })}
+            {!selectedDayTransactions.length && (
+              <div className="daily-empty">
+                <span>○</span>
+                <p>{t.noExpensesOnDay}</p>
+              </div>
+            )}
+          </div>
+        </section>
         {showTelegram && currentMember && (
           <TelegramPanel
             current={currentMember}
@@ -2584,16 +3110,21 @@ export default function Dashboard({
           <BudgetCard
             transactions={data.familyBudgetTransactions}
             adjustmentCents={data.budgetAdjustmentCents}
+            dailyBudgetRules={data.dailyBudgetRules}
+            baseCurrency={data.household.baseCurrency as Currency}
             language={language}
             displayCurrency={displayCurrency}
             rates={rates}
             isOwner={isOwner}
             onAdjust={() => setModal("budget")}
+            onConfigure={() => setModal("budgetSettings")}
           />
         )}
         {!isDemo && isOwner && (
           <MonthlyHistoryCard
             transactions={visibleTransactions}
+            monthlyBudgetAdjustments={data.monthlyBudgetAdjustments}
+            dailyBudgetRules={data.dailyBudgetRules}
             language={language}
             formatMoney={formatMoney}
             scopeName={
@@ -2824,7 +3355,9 @@ export default function Dashboard({
                           language === "nl" ? "nl-NL" : "en-GB",
                           { day: "numeric", month: "short" },
                         )}
-                        {item.currency !== "EUR" ? ` · ${item.currency}` : ""}
+                        {item.currency !== data.household.baseCurrency
+                          ? ` · ${item.currency}`
+                          : ""}
                       </span>
                     </div>
                     {item.source === "telegram" && (
@@ -2873,7 +3406,7 @@ export default function Dashboard({
                   <div key={code}>
                     <span>{currencySymbols[code]}</span>
                     <b>
-                      {rates?.[code]?.toFixed(3) ??
+                      {referenceRates?.[code]?.toFixed(3) ??
                         (code === "USD"
                           ? "1.160"
                           : code === "GBP"
@@ -2960,6 +3493,7 @@ export default function Dashboard({
           isOwner={isOwner}
           language={language}
           displayCurrency={displayCurrency}
+          baseCurrency={data.household.baseCurrency as Currency}
           rates={rates}
           onClose={() => setModal(null)}
           onEdit={(item) => {
@@ -3024,6 +3558,18 @@ export default function Dashboard({
           demoMode={isDemo}
           onClose={() => setModal(null)}
           onUpdated={setData}
+        />
+      )}
+      {modal === "budgetSettings" && isOwner && (
+        <FamilyBudgetSettingsModal
+          language={language}
+          data={data}
+          demoMode={isDemo}
+          onClose={() => setModal(null)}
+          onUpdated={(fresh) => {
+            setData(fresh);
+            setDisplayCurrency(fresh.household.baseCurrency as Currency);
+          }}
         />
       )}
     </div>

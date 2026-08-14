@@ -48,8 +48,17 @@ export type DashboardData = {
     city: string;
     budgetAdjustmentCents: number;
     budgetAdjustmentMonth?: string | null;
+    setupCompletedAt?: string | null;
   };
   budgetAdjustmentCents: number;
+  monthlyBudgetAdjustments: Array<{
+    month: string;
+    adjustmentCents: number;
+  }>;
+  dailyBudgetRules: Array<{
+    effectiveDate: string;
+    dailyBudgetCents: number;
+  }>;
   currentMemberId: string;
   members: Member[];
   transactions: Transaction[];

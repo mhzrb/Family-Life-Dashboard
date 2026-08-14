@@ -3,6 +3,8 @@ import { and, eq, isNull } from "drizzle-orm";
 import { getDb } from "../db";
 import {
   expenseCategories,
+  householdDailyBudgets,
+  householdMonthlyBudgets,
   households,
   members,
   telegramBotState,
@@ -82,10 +84,10 @@ const botCopy = {
     addCategory: "Add a new category",
     typeCategory: "Type the name of the new category, for example: Pets",
     useOther: "Use Other",
-    amountOnly: "Now send only the amount in EUR, for example: 24.50",
+    amountOnly: (currency: string) => `Now send only the amount in ${currency}, for example: 24.50`,
     categoryNotFound: "Category not found",
-    selected: (name: string) =>
-      `Selected: ${name}\nNow send only the amount in EUR, for example: 24.50`,
+    selected: (name: string, currency: string) =>
+      `Selected: ${name}\nNow send only the amount in ${currency}, for example: 24.50`,
     selectedShort: (name: string) => `${name} selected`,
     otherQuestion: "Would you like to add a new category?",
     yesAdd: "Yes, add new",
@@ -108,14 +110,14 @@ const botCopy = {
       "Use a short category name (2–30 letters or numbers), for example: Pets",
     categoryExists:
       "That category already exists. Choose it from the menu or enter a different name.",
-    categoryAdded: (name: string) =>
-      `Added: ${name} ✓\nNow send only the amount in EUR, for example: 24.50`,
+    categoryAdded: (name: string, currency: string) =>
+      `Added: ${name} ✓\nNow send only the amount in ${currency}, for example: 24.50`,
     invalidAmount: "Please send only a positive number, for example: 24.50",
     tapAdd:
       "Tap “Add expense” below, choose a category, then send only the amount.",
     invalidPositive: "Please enter a valid positive amount.",
-    saved: (amount: number, category: string, note?: string) =>
-      `Saved ✓  €${amount.toFixed(2)} · ${category}${note ? `\n${note}` : ""}`,
+    saved: (amount: number, currency: string, category: string, note?: string) =>
+      `Saved ✓  ${currency} ${amount.toFixed(2)} · ${category}${note ? `\n${note}` : ""}`,
   },
   nl: {
     buttons: {
@@ -143,10 +145,10 @@ const botCopy = {
     addCategory: "Nieuwe categorie toevoegen",
     typeCategory: "Typ de naam van de nieuwe categorie, bijvoorbeeld: Huisdieren",
     useOther: "Overig gebruiken",
-    amountOnly: "Stuur nu alleen het bedrag in EUR, bijvoorbeeld: 24.50",
+    amountOnly: (currency: string) => `Stuur nu alleen het bedrag in ${currency}, bijvoorbeeld: 24.50`,
     categoryNotFound: "Categorie niet gevonden",
-    selected: (name: string) =>
-      `Geselecteerd: ${name}\nStuur nu alleen het bedrag in EUR, bijvoorbeeld: 24.50`,
+    selected: (name: string, currency: string) =>
+      `Geselecteerd: ${name}\nStuur nu alleen het bedrag in ${currency}, bijvoorbeeld: 24.50`,
     selectedShort: (name: string) => `${name} geselecteerd`,
     otherQuestion: "Wil je een nieuwe categorie toevoegen?",
     yesAdd: "Ja, toevoegen",
@@ -168,14 +170,14 @@ const botCopy = {
       "Gebruik een korte categorienaam (2–30 letters of cijfers), bijvoorbeeld: Huisdieren",
     categoryExists:
       "Deze categorie bestaat al. Kies haar in het menu of voer een andere naam in.",
-    categoryAdded: (name: string) =>
-      `Toegevoegd: ${name} ✓\nStuur nu alleen het bedrag in EUR, bijvoorbeeld: 24.50`,
+    categoryAdded: (name: string, currency: string) =>
+      `Toegevoegd: ${name} ✓\nStuur nu alleen het bedrag in ${currency}, bijvoorbeeld: 24.50`,
     invalidAmount: "Stuur alleen een positief bedrag, bijvoorbeeld: 24.50",
     tapAdd:
       "Tik hieronder op “Uitgave toevoegen”, kies een categorie en stuur alleen het bedrag.",
     invalidPositive: "Voer een geldig positief bedrag in.",
-    saved: (amount: number, category: string, note?: string) =>
-      `Opgeslagen ✓  €${amount.toFixed(2)} · ${category}${note ? `\n${note}` : ""}`,
+    saved: (amount: number, currency: string, category: string, note?: string) =>
+      `Opgeslagen ✓  ${currency} ${amount.toFixed(2)} · ${category}${note ? `\n${note}` : ""}`,
   },
   fa: {
     buttons: {
@@ -203,10 +205,10 @@ const botCopy = {
     addCategory: "افزودن دسته‌بندی جدید",
     typeCategory: "نام دسته‌بندی جدید را بنویسید؛ برای مثال: حیوانات خانگی",
     useOther: "استفاده از سایر",
-    amountOnly: "حالا فقط مبلغ را به یورو بفرستید؛ برای مثال: 24.50",
+    amountOnly: (currency: string) => `حالا فقط مبلغ را به ${currency} بفرستید؛ برای مثال: 24.50`,
     categoryNotFound: "دسته‌بندی پیدا نشد",
-    selected: (name: string) =>
-      `انتخاب شد: ${name}\nحالا فقط مبلغ را به یورو بفرستید؛ برای مثال: 24.50`,
+    selected: (name: string, currency: string) =>
+      `انتخاب شد: ${name}\nحالا فقط مبلغ را به ${currency} بفرستید؛ برای مثال: 24.50`,
     selectedShort: (name: string) => `${name} انتخاب شد`,
     otherQuestion: "می‌خواهید یک دسته‌بندی جدید اضافه کنید؟",
     yesAdd: "بله، اضافه کن",
@@ -228,14 +230,14 @@ const botCopy = {
       "یک نام کوتاه ۲ تا ۳۰ حرفی یا عددی وارد کنید؛ برای مثال: حیوانات خانگی",
     categoryExists:
       "این دسته‌بندی از قبل وجود دارد. آن را از منو انتخاب کنید یا نام دیگری بنویسید.",
-    categoryAdded: (name: string) =>
-      `اضافه شد: ${name} ✓\nحالا فقط مبلغ را به یورو بفرستید؛ برای مثال: 24.50`,
+    categoryAdded: (name: string, currency: string) =>
+      `اضافه شد: ${name} ✓\nحالا فقط مبلغ را به ${currency} بفرستید؛ برای مثال: 24.50`,
     invalidAmount: "فقط یک مبلغ مثبت بفرستید؛ برای مثال: 24.50",
     tapAdd:
       "روی «ثبت هزینه» بزنید، دسته‌بندی را انتخاب کنید و فقط مبلغ را بفرستید.",
     invalidPositive: "یک مبلغ مثبت و معتبر وارد کنید.",
-    saved: (amount: number, category: string, note?: string) =>
-      `ذخیره شد ✓  €${amount.toFixed(2)} · ${category}${note ? `\n${note}` : ""}`,
+    saved: (amount: number, currency: string, category: string, note?: string) =>
+      `ذخیره شد ✓  ${currency} ${amount.toFixed(2)} · ${category}${note ? `\n${note}` : ""}`,
   },
 } satisfies Record<TelegramLanguage, object>;
 
@@ -392,13 +394,33 @@ async function activeLink(chatId: string) {
 
 async function memberBudgetStatus(householdId: string) {
   const db = await getDb();
+  const currentMonth = budgetMonthKey();
   const [household] = await db
     .select({
+      baseCurrency: households.baseCurrency,
       budgetAdjustmentCents: households.budgetAdjustmentCents,
       budgetAdjustmentMonth: households.budgetAdjustmentMonth,
     })
     .from(households)
     .where(eq(households.id, householdId))
+    .limit(1);
+  const dailyBudgetRules = await db
+    .select({
+      effectiveDate: householdDailyBudgets.effectiveDate,
+      dailyBudgetCents: householdDailyBudgets.dailyBudgetCents,
+    })
+    .from(householdDailyBudgets)
+    .where(eq(householdDailyBudgets.householdId, householdId))
+    .orderBy(householdDailyBudgets.effectiveDate);
+  const [monthlyBudget] = await db
+    .select({ adjustmentCents: householdMonthlyBudgets.adjustmentCents })
+    .from(householdMonthlyBudgets)
+    .where(
+      and(
+        eq(householdMonthlyBudgets.householdId, householdId),
+        eq(householdMonthlyBudgets.month, currentMonth),
+      ),
+    )
     .limit(1);
   const items = await db
     .select({
@@ -414,9 +436,10 @@ async function memberBudgetStatus(householdId: string) {
       ),
     );
   const adjustmentCents =
-    household?.budgetAdjustmentMonth === budgetMonthKey()
+    monthlyBudget?.adjustmentCents ??
+    (household?.budgetAdjustmentMonth === currentMonth
       ? household.budgetAdjustmentCents
-      : 0;
+      : 0);
   return calculateBudgetStatus(
     items as Array<{
       type: "expense" | "income";
@@ -425,6 +448,8 @@ async function memberBudgetStatus(householdId: string) {
     }>,
     new Date(),
     adjustmentCents,
+    dailyBudgetRules,
+    (household?.baseCurrency ?? "EUR") as "EUR" | "USD" | "CAD" | "GBP",
   );
 }
 
@@ -436,6 +461,16 @@ async function memberBudgetText(
     await memberBudgetStatus(householdId),
     language,
   );
+}
+
+async function householdCurrency(householdId: string) {
+  const db = await getDb();
+  const [household] = await db
+    .select({ baseCurrency: households.baseCurrency })
+    .from(households)
+    .where(eq(households.id, householdId))
+    .limit(1);
+  return household?.baseCurrency ?? "EUR";
 }
 
 async function memberMonthlySummaryText(
@@ -457,6 +492,7 @@ async function saveExpense(
   const linked = await activeLink(chatId);
   if (!linked) return false;
   const db = await getDb();
+  const currency = await householdCurrency(linked.link.householdId);
   const amountCents = Math.round(amount * 100);
   const inserted = await db
     .insert(transactions)
@@ -466,7 +502,7 @@ async function saveExpense(
       memberId: linked.link.memberId,
       amountCents,
       baseAmountCents: amountCents,
-      currency: "EUR",
+      currency,
       category,
       note: category,
       type: "expense",
@@ -484,7 +520,7 @@ async function saveExpense(
       action: "transaction.created",
       entityType: "transaction",
       entityId: inserted[0].id,
-      summary: `Added EUR ${amount.toFixed(2)} in ${category} via Telegram`,
+      summary: `Added ${currency} ${amount.toFixed(2)} in ${category} via Telegram`,
     });
   return inserted.length > 0;
 }
@@ -508,6 +544,7 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
     }
     const language = normalizeLanguage(linked.link.language);
     const copy = botCopy[language];
+    const baseCurrency = await householdCurrency(linked.link.householdId);
     const callbackRate = await enforceRateLimit(`telegram:${chatId}`, 30);
     if (!callbackRate.allowed) {
       await answerCallback(callback.id, copy.wait);
@@ -571,7 +608,7 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
           },
         });
       await answerCallback(callback.id, copy.useOther);
-      await replyToTelegram(chatId, copy.amountOnly);
+      await replyToTelegram(chatId, copy.amountOnly(baseCurrency));
       return;
     }
     if (callback.data?.startsWith("custom_category:")) {
@@ -607,7 +644,7 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
           },
         });
       await answerCallback(callback.id, copy.selectedShort(custom.name));
-      await replyToTelegram(chatId, copy.selected(custom.name));
+      await replyToTelegram(chatId, copy.selected(custom.name, baseCurrency));
       return;
     }
     const category = callback.data?.startsWith("category:")
@@ -650,7 +687,7 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
       });
     const displayedCategory = categoryDisplay(language, category);
     await answerCallback(callback.id, copy.selectedShort(displayedCategory));
-    await replyToTelegram(chatId, copy.selected(displayedCategory));
+    await replyToTelegram(chatId, copy.selected(displayedCategory, baseCurrency));
     return;
   }
   const message = update.message;
@@ -747,6 +784,7 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
   }
   const language = normalizeLanguage(linked.link.language);
   const copy = botCopy[language];
+  const baseCurrency = await householdCurrency(linked.link.householdId);
   if (text === "/start" || text === "/menu" || text === "/help") {
     await replyToTelegram(
       chatId,
@@ -890,7 +928,7 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
       });
     await replyToTelegram(
       chatId,
-      copy.categoryAdded(finalCategory),
+      copy.categoryAdded(finalCategory, baseCurrency),
     );
     return;
   }
@@ -920,7 +958,7 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
     if (saved)
       await replyToTelegram(
         chatId,
-        `${copy.saved(amount, categoryDisplay(language, conversation.category))}\n\n${await memberBudgetText(linked.link.householdId, language)}`,
+        `${copy.saved(amount, baseCurrency, categoryDisplay(language, conversation.category))}\n\n${await memberBudgetText(linked.link.householdId, language)}`,
         mainMenu(language),
       );
     return;
@@ -949,6 +987,7 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
     : "Other";
   const note = match[3]?.trim() || requestedCategory;
   const amountCents = Math.round(amount * 100);
+  const currency = await householdCurrency(linked.link.householdId);
   const inserted = await db
     .insert(transactions)
     .values({
@@ -957,7 +996,7 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
       memberId: linked.link.memberId,
       amountCents,
       baseAmountCents: amountCents,
-      currency: "EUR",
+      currency,
       category,
       note,
       type: "expense",
@@ -971,7 +1010,7 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
   if (inserted.length)
     await replyToTelegram(
       chatId,
-      `${copy.saved(amount, categoryDisplay(language, category), note)}\n\n${await memberBudgetText(linked.link.householdId, language)}`,
+      `${copy.saved(amount, baseCurrency, categoryDisplay(language, category), note)}\n\n${await memberBudgetText(linked.link.householdId, language)}`,
       mainMenu(language),
     );
 }

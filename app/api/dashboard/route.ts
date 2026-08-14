@@ -2,6 +2,8 @@ import { and, desc, eq, isNull, ne, sql } from "drizzle-orm";
 import { getDb } from "../../../db";
 import {
   households,
+  householdDailyBudgets,
+  householdMonthlyBudgets,
   auditLogs,
   expenseCategories,
   members,
@@ -9,7 +11,7 @@ import {
   transactions,
 } from "../../../db/schema";
 import { requestIdentity } from "../../../lib/server-auth";
-import { budgetMonthKey } from "../../../lib/budget";
+import { budgetDateKey, budgetMonthKey } from "../../../lib/budget";
 import {
   enforceRateLimit,
   safeIsoDate,
@@ -31,6 +33,19 @@ const allowedCategories = [
   "Bills",
   "Other",
 ];
+const supportedCurrencies = ["EUR", "USD", "CAD", "GBP"] as const;
+
+async function exchangeRate(from: string, to: string) {
+  if (from === to) return 1;
+  const response = await fetch(
+    `https://api.frankfurter.dev/v2/rates?base=${encodeURIComponent(from)}&quotes=${encodeURIComponent(to)}`,
+  );
+  if (!response.ok) throw new Error("Rate unavailable");
+  const rows = (await response.json()) as Array<{ quote: string; rate: number }>;
+  const rate = rows.find((row) => row.quote === to)?.rate;
+  if (!rate || !Number.isFinite(rate)) throw new Error("Rate unavailable");
+  return rate;
+}
 
 class HttpError extends Error {
   constructor(
@@ -92,6 +107,13 @@ async function currentMember(request: Request) {
       kind: "family",
       baseCurrency: "EUR",
       city: "Hengelo",
+      createdAt: now,
+    }),
+    db.insert(householdDailyBudgets).values({
+      id: crypto.randomUUID(),
+      householdId,
+      effectiveDate: budgetDateKey(now),
+      dailyBudgetCents: 2_000,
       createdAt: now,
     }),
     db.insert(members).values({
@@ -186,6 +208,30 @@ async function dashboardPayload(
     )
     .orderBy(desc(auditLogs.createdAt))
     .limit(40);
+  const monthlyBudgetRows = await db
+    .select({
+      month: householdMonthlyBudgets.month,
+      adjustmentCents: householdMonthlyBudgets.adjustmentCents,
+    })
+    .from(householdMonthlyBudgets)
+    .where(eq(householdMonthlyBudgets.householdId, member.householdId));
+  const dailyBudgetRows = await db
+    .select({
+      effectiveDate: householdDailyBudgets.effectiveDate,
+      dailyBudgetCents: householdDailyBudgets.dailyBudgetCents,
+    })
+    .from(householdDailyBudgets)
+    .where(eq(householdDailyBudgets.householdId, member.householdId))
+    .orderBy(householdDailyBudgets.effectiveDate);
+  const currentMonth = budgetMonthKey();
+  const savedCurrentAdjustment = monthlyBudgetRows.find(
+    (item) => item.month === currentMonth,
+  )?.adjustmentCents;
+  const currentAdjustment =
+    savedCurrentAdjustment ??
+    (household?.budgetAdjustmentMonth === currentMonth
+      ? household.budgetAdjustmentCents
+      : 0);
 
   const visibleFamily = canViewFamily
     ? family
@@ -204,15 +250,11 @@ async function dashboardPayload(
   return {
     household: {
       ...household,
-      budgetAdjustmentCents:
-        household?.budgetAdjustmentMonth === budgetMonthKey()
-          ? household.budgetAdjustmentCents
-          : 0,
+      budgetAdjustmentCents: currentAdjustment,
     },
-    budgetAdjustmentCents:
-      household?.budgetAdjustmentMonth === budgetMonthKey()
-        ? household.budgetAdjustmentCents
-        : 0,
+    budgetAdjustmentCents: currentAdjustment,
+    monthlyBudgetAdjustments: monthlyBudgetRows,
+    dailyBudgetRules: dailyBudgetRows,
     currentMemberId: member.id,
     members: privateFamily,
     transactions: activity,
@@ -463,25 +505,142 @@ export async function POST(request: Request) {
       const amount = Number(body.amount);
       if (!Number.isFinite(amount) || Math.abs(amount) > 1_000_000)
         return secureJson(
-          { error: "Enter a valid adjustment between -1,000,000 and 1,000,000 EUR" },
+          { error: "Enter a valid adjustment between -1,000,000 and 1,000,000" },
           { status: 400 },
         );
       const adjustmentCents = Math.round(amount * 100);
       const month = budgetMonthKey();
-      await db
-        .update(households)
-        .set({
-          budgetAdjustmentCents: adjustmentCents,
-          budgetAdjustmentMonth: month,
-        })
-        .where(eq(households.id, member.householdId));
+      const now = new Date().toISOString();
+      await db.batch([
+        db
+          .insert(householdMonthlyBudgets)
+          .values({
+            id: crypto.randomUUID(),
+            householdId: member.householdId,
+            month,
+            adjustmentCents,
+            updatedAt: now,
+          })
+          .onConflictDoUpdate({
+            target: [
+              householdMonthlyBudgets.householdId,
+              householdMonthlyBudgets.month,
+            ],
+            set: { adjustmentCents, updatedAt: now },
+          }),
+        db
+          .update(households)
+          .set({
+            budgetAdjustmentCents: adjustmentCents,
+            budgetAdjustmentMonth: month,
+          })
+          .where(eq(households.id, member.householdId)),
+      ]);
       await writeAudit({
         householdId: member.householdId,
         actorMemberId: member.id,
         action: "budget.adjusted",
         entityType: "household",
         entityId: member.householdId,
-        summary: `Set ${month} budget adjustment to EUR ${amount.toFixed(2)}`,
+        summary: `Set ${month} budget adjustment to ${amount.toFixed(2)} base-currency units`,
+      });
+      return secureJson(await dashboardPayload(db, member));
+    }
+
+    if (body.action === "updateFamilyBudgetSettings") {
+      if (member.role !== "owner")
+        return secureJson(
+          { error: "Only the household owner can change budget settings" },
+          { status: 403 },
+        );
+      const amount = Number(body.dailyBudget);
+      const currency = String(body.baseCurrency ?? "").toUpperCase();
+      if (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000)
+        return secureJson(
+          { error: "Enter a daily budget greater than zero" },
+          { status: 400 },
+        );
+      if (!(supportedCurrencies as readonly string[]).includes(currency))
+        return secureJson({ error: "Unsupported base currency" }, { status: 400 });
+
+      const [currentHousehold] = await db
+        .select()
+        .from(households)
+        .where(eq(households.id, member.householdId))
+        .limit(1);
+      if (!currentHousehold)
+        return secureJson({ error: "Household not found" }, { status: 404 });
+
+      const now = new Date().toISOString();
+      const effectiveDate = budgetDateKey(now);
+      if (currentHousehold.baseCurrency !== currency) {
+        let factor: number;
+        try {
+          factor = await exchangeRate(currentHousehold.baseCurrency, currency);
+        } catch {
+          return secureJson(
+            { error: "Currency conversion is temporarily unavailable" },
+            { status: 503 },
+          );
+        }
+        await db.batch([
+          db
+            .update(transactions)
+            .set({
+              baseAmountCents: sql`CAST(round(${transactions.baseAmountCents} * ${factor}) AS INTEGER)`,
+            })
+            .where(eq(transactions.householdId, member.householdId)),
+          db
+            .update(householdDailyBudgets)
+            .set({
+              dailyBudgetCents: sql`CAST(round(${householdDailyBudgets.dailyBudgetCents} * ${factor}) AS INTEGER)`,
+            })
+            .where(eq(householdDailyBudgets.householdId, member.householdId)),
+          db
+            .update(householdMonthlyBudgets)
+            .set({
+              adjustmentCents: sql`CAST(round(${householdMonthlyBudgets.adjustmentCents} * ${factor}) AS INTEGER)`,
+            })
+            .where(eq(householdMonthlyBudgets.householdId, member.householdId)),
+          db
+            .update(households)
+            .set({
+              budgetAdjustmentCents: sql`CAST(round(${households.budgetAdjustmentCents} * ${factor}) AS INTEGER)`,
+            })
+            .where(eq(households.id, member.householdId)),
+        ]);
+      }
+
+      const dailyBudgetCents = Math.round(amount * 100);
+      await db.batch([
+        db
+          .insert(householdDailyBudgets)
+          .values({
+            id: crypto.randomUUID(),
+            householdId: member.householdId,
+            effectiveDate,
+            dailyBudgetCents,
+            createdAt: now,
+          })
+          .onConflictDoUpdate({
+            target: [
+              householdDailyBudgets.householdId,
+              householdDailyBudgets.effectiveDate,
+            ],
+            set: { dailyBudgetCents, createdAt: now },
+          }),
+        db
+          .update(households)
+          .set({ baseCurrency: currency, setupCompletedAt: now })
+          .where(eq(households.id, member.householdId)),
+      ]);
+      await writeAudit({
+        householdId: member.householdId,
+        actorMemberId: member.id,
+        action: "budget.daily_settings_updated",
+        entityType: "household",
+        entityId: member.householdId,
+        summary: `Set daily budget to ${currency} ${amount.toFixed(2)} from ${effectiveDate}`,
       });
       return secureJson(await dashboardPayload(db, member));
     }
@@ -732,7 +891,6 @@ export async function POST(request: Request) {
       const note = String(body.note ?? "Expense").trim();
       const currency = String(body.currency ?? "EUR").toUpperCase();
       const type = body.type === "income" ? "income" : "expense";
-      const supportedCurrencies = ["EUR", "USD", "CAD", "GBP"];
       if (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000_000) {
         return Response.json(
           { error: "Amount must be greater than zero" },
@@ -759,29 +917,25 @@ export async function POST(request: Request) {
           { status: 400 },
         );
       }
-      if (!supportedCurrencies.includes(currency)) {
+      if (!(supportedCurrencies as readonly string[]).includes(currency)) {
         return Response.json(
           { error: "Unsupported currency" },
           { status: 400 },
         );
       }
 
-      let amountInEuro = amount;
-      if (currency !== "EUR") {
+      const [household] = await db
+        .select({ baseCurrency: households.baseCurrency })
+        .from(households)
+        .where(eq(households.id, member.householdId))
+        .limit(1);
+      const baseCurrency = household?.baseCurrency ?? "EUR";
+      let amountInBase = amount;
+      if (currency !== baseCurrency) {
         try {
-          const rateResponse = await fetch(
-            `https://api.frankfurter.dev/v2/rates?base=${currency}&quotes=EUR`,
-          );
-          const rateRows = (await rateResponse.json()) as Array<{
-            quote: string;
-            rate: number;
-          }>;
-          const rate = rateRows.find((row) => row.quote === "EUR")?.rate;
-          if (!rate || !Number.isFinite(rate))
-            throw new Error("Rate unavailable");
-          amountInEuro = amount * rate;
+          amountInBase = amount * (await exchangeRate(currency, baseCurrency));
         } catch {
-          const fallbackRate = Number(body.eurRate);
+          const fallbackRate = Number(body.baseRate);
           if (
             !Number.isFinite(fallbackRate) ||
             fallbackRate <= 0 ||
@@ -792,7 +946,7 @@ export async function POST(request: Request) {
               { status: 503 },
             );
           }
-          amountInEuro = amount * fallbackRate;
+          amountInBase = amount * fallbackRate;
         }
       }
 
@@ -804,7 +958,7 @@ export async function POST(request: Request) {
         householdId: member.householdId,
         memberId: member.id,
         amountCents: Math.round(amount * 100),
-        baseAmountCents: Math.round(amountInEuro * 100),
+        baseAmountCents: Math.round(amountInBase * 100),
         currency,
         category,
         note: note || category,

@@ -8,8 +8,45 @@ export const households = sqliteTable("households", {
   city: text("city").notNull().default("Hengelo"),
   budgetAdjustmentCents: integer("budget_adjustment_cents").notNull().default(0),
   budgetAdjustmentMonth: text("budget_adjustment_month"),
+  setupCompletedAt: text("setup_completed_at"),
   createdAt: text("created_at").notNull(),
 });
+
+export const householdDailyBudgets = sqliteTable(
+  "household_daily_budgets",
+  {
+    id: text("id").primaryKey(),
+    householdId: text("household_id").notNull(),
+    effectiveDate: text("effective_date").notNull(),
+    dailyBudgetCents: integer("daily_budget_cents").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("household_daily_budgets_household_date_uidx").on(
+      table.householdId,
+      table.effectiveDate,
+    ),
+    index("household_daily_budgets_household_idx").on(table.householdId),
+  ],
+);
+
+export const householdMonthlyBudgets = sqliteTable(
+  "household_monthly_budgets",
+  {
+    id: text("id").primaryKey(),
+    householdId: text("household_id").notNull(),
+    month: text("month").notNull(),
+    adjustmentCents: integer("adjustment_cents").notNull().default(0),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("household_monthly_budgets_household_month_uidx").on(
+      table.householdId,
+      table.month,
+    ),
+    index("household_monthly_budgets_household_idx").on(table.householdId),
+  ],
+);
 
 export const members = sqliteTable(
   "members",

@@ -66,6 +66,7 @@ button { color: inherit; }
 .dashboard-main { min-height: 100vh; margin-left: 250px; padding: 32px 34px 92px; }
 .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 24px; }
 .date-line, .eyebrow { margin: 0 0 6px; color: var(--muted); font-size: 9px; font-weight: 700; letter-spacing: .15em; text-transform: uppercase; }
+.date-navigator { position: relative; display: inline-flex; align-items: center; gap: 5px; margin-bottom: 5px; }.date-trigger { display: inline-flex; align-items: center; gap: 6px; padding: 7px 9px; border: 1px solid transparent; border-radius: 9px; background: transparent; cursor: pointer; text-align: left; }.date-trigger:hover, .date-trigger[aria-expanded="true"] { border-color: var(--line); background: var(--paper); }.date-trigger span { font-size: 8px; }.date-arrow { width: 29px; height: 29px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; background: var(--paper); color: var(--green); cursor: pointer; font-size: 19px; line-height: 1; }.date-arrow:disabled { opacity: .35; cursor: default; }.today-shortcut { padding: 7px 9px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); color: var(--green); cursor: pointer; font-size: 8px; font-weight: 700; }.expense-calendar { position: absolute; z-index: 40; top: calc(100% + 7px); left: 34px; width: 310px; padding: 14px; border: 1px solid var(--line); border-radius: 15px; background: var(--paper); box-shadow: 0 20px 55px rgba(28, 39, 70, .2); text-transform: none; letter-spacing: normal; }.calendar-head { display: grid; grid-template-columns: 32px 1fr 32px; align-items: center; gap: 8px; margin-bottom: 11px; }.calendar-head strong { text-align: center; font-family: Georgia, serif; font-size: 15px; font-weight: 400; text-transform: capitalize; }.calendar-head button { width: 30px; height: 30px; border: 1px solid var(--line); border-radius: 50%; background: var(--soft); cursor: pointer; font-size: 17px; }.calendar-head button:disabled { opacity: .35; cursor: default; }.calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }.calendar-weekdays { margin-bottom: 4px; color: var(--muted); font-size: 8px; text-align: center; }.calendar-grid > button { position: relative; min-width: 0; height: 34px; border: 1px solid transparent; border-radius: 9px; background: transparent; cursor: pointer; font-size: 10px; }.calendar-grid > button:hover { border-color: var(--line); background: var(--soft); }.calendar-grid > button.selected { border-color: var(--green); background: var(--green); color: white; font-weight: 700; }.calendar-grid > button:disabled { opacity: .25; cursor: default; }.calendar-grid > button i { position: absolute; right: 50%; bottom: 3px; width: 4px; height: 4px; transform: translateX(50%); border-radius: 50%; background: var(--coral); }.calendar-grid > button.selected i { background: white; }.calendar-close { width: 100%; margin-top: 11px; padding: 8px; border: 1px solid var(--line); border-radius: 9px; background: var(--soft); color: var(--green); cursor: pointer; font-size: 9px; font-weight: 700; }
 .topbar h1 { margin: 0; color: var(--green); font-family: var(--font-caveat), "Segoe Print", cursive; font-size: clamp(40px, 4vw, 56px); font-weight: 600; line-height: .95; letter-spacing: .01em; }
 .topbar > div:first-child > p:last-child { margin: 7px 0 0; color: var(--muted); font-size: 12px; }
 .top-actions { display: flex; align-items: center; gap: 10px; }
@@ -82,6 +83,7 @@ button { color: inherit; }
 .demo-banner { margin: -8px 0 18px; padding: 10px 14px; border: 1px solid #d7dfca; border-radius: 10px; background: #eef4e8; color: #54664e; font-size: 10px; }
 .demo-banner span { margin-right: 9px; padding: 3px 6px; border-radius: 5px; background: #d8e6cc; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
 .demo-banner button { float: right; padding: 0; border: 0; background: transparent; color: #2d6d59; cursor: pointer; font-size: 9px; font-weight: 700; }
+.daily-ledger { margin-bottom: 18px; }.daily-ledger-head { align-items: center; }.daily-ledger-head h2 { text-transform: capitalize; }.daily-ledger-head p { margin: 5px 0 0; color: var(--muted); font-size: 9px; }.daily-ledger-head > strong { color: var(--green); font-family: Georgia, serif; font-size: 22px; font-weight: 400; }.daily-transaction-list { max-height: 310px; margin-top: 11px; overflow: auto; }.daily-empty { display: flex; align-items: center; justify-content: center; gap: 9px; min-height: 68px; color: var(--muted); }.daily-empty span { color: var(--green); font-size: 20px; }.daily-empty p { margin: 0; font-size: 10px; }
 
 .metric-grid { display: grid; grid-template-columns: 1.25fr 1fr 1.1fr 1.1fr; gap: 13px; }
 .metric, .panel { position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 15px; background: var(--paper); box-shadow: var(--shadow); }
@@ -152,6 +154,7 @@ button { color: inherit; }
 .budget-month.under b, .budget-card.under h2 { color: #187052; }
 .budget-month.over b, .budget-card.over h2 { color: #b64238; }
 .budget-adjust-button { margin-top: 10px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); color: var(--green); cursor: pointer; font-size: 8px; font-weight: 700; }
+.budget-owner-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .budget-examples { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
 .budget-examples button, .access-toggle { padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); color: var(--muted); cursor: pointer; font-size: 8px; font-weight: 700; }
 .access-toggle.enabled { border-color: color-mix(in srgb, #24815f 45%, var(--line)); background: color-mix(in srgb, #dff3e8 70%, var(--panel)); color: #187052; }
@@ -274,5 +277,39 @@ button { color: inherit; }
 @media (max-width: 760px) {
   .dashboard-main::before, .dashboard-main::after { display: none; }
   .brand strong { font-size: 22px; }
+  .date-navigator { width: 100%; flex-wrap: wrap; }
+  .date-trigger { flex: 1; min-width: 190px; margin: 0; }
+  .expense-calendar { position: fixed; top: 50%; left: 50%; width: min(330px, calc(100vw - 28px)); transform: translate(-50%, -50%); }
+  .daily-ledger-head { align-items: flex-start; }
 }
 @media (max-width: 480px) { .topbar h1 { font-size: 39px; } }
+@media (min-width: 761px) {
+  .nav-item, .sidebar-bottom button { min-height: 44px; font-size: 14px; }
+  .scope { padding: 10px 9px; }
+  .scope b { font-size: 12px; }
+  .scope small { font-size: 9.5px; }
+  .scope em { font-size: 10px; }
+  .invite-button, .manage-button { min-height: 40px; font-size: 10.5px; }
+  .date-trigger { margin: 0; font-size: 10px; }
+  .date-arrow { width: 32px; height: 32px; }
+  .today-shortcut { min-height: 32px; font-size: 9px; }
+  .header-select, .live-chip, .test-button { min-height: 40px; }
+  .header-select > span { font-size: 8px; }
+  .header-select select, .live-chip, .test-button { font-size: 10px; }
+  .theme-button, .top-avatar { width: 40px; height: 40px; }
+  .metric-top { font-size: 9.5px; }
+  .metric p, .budget-card p, .budget-month p { font-size: 10.5px; }
+  .panel h2 { font-size: 21px; }
+  .eyebrow { font-size: 9.5px; }
+  .transaction-copy b { font-size: 11.5px; }
+  .transaction-copy span { font-size: 9.5px; }
+  .transaction-amount { font-size: 13px; }
+  .link-button { min-height: 34px; font-size: 10.5px; }
+  .text-button, .primary-button { min-height: 40px; padding: 12px 18px; font-size: 11px; }
+  .edit-transaction, .danger-button, .access-toggle, .budget-adjust-button, .activate-bot { min-height: 32px; padding: 8px 10px; font-size: 9px; }
+  .member-row b { font-size: 11.5px; }
+  .member-row small { font-size: 9.5px; }
+  .telegram-panel p, .code-pill, .message-example { font-size: 10px; }
+  .telegram-bot-link { font-size: 10px; }
+  .fab { padding: 14px 20px 14px 14px; font-size: 12px; }
+}

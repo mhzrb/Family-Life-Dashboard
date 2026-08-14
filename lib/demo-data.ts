@@ -63,8 +63,16 @@ export function createDemoData(): DashboardData {
       city: "Hengelo",
       budgetAdjustmentCents: 0,
       budgetAdjustmentMonth: null,
+      setupCompletedAt: new Date().toISOString(),
     },
     budgetAdjustmentCents: 0,
+    monthlyBudgetAdjustments: [],
+    dailyBudgetRules: [
+      {
+        effectiveDate: "2026-08-11",
+        dailyBudgetCents: 2_000,
+      },
+    ],
     currentMemberId: ownerId,
     members: [
       {
